@@ -680,6 +680,17 @@ def schedule_auto_stop(server: ThreadingHTTPServer, seconds: int | None) -> thre
     return timer
 
 
+def print_useful_options() -> None:
+    print("Useful options:")
+    print("  --upload-dir PATH   Share/save files in another directory")
+    print("  --overwrite         Replace existing files instead of renaming duplicates")
+    print("  --max-size 500MB    Reject uploads larger than this size")
+    print("  --stop-after 30m    Stop automatically after a short session")
+    print("  --port 9000         Use a different port")
+    print("  --host 127.0.0.1    Listen only on this computer")
+    print("  --help              Show all options")
+
+
 def run_server(
     host: str,
     port: int,
@@ -703,6 +714,7 @@ def run_server(
         print("Open:")
         for url in server_urls(host if host else actual_host, actual_port):
             print(f"  {url}")
+        print_useful_options()
 
         try:
             server.serve_forever()
