@@ -1371,7 +1371,7 @@ def build_index_html(
     function fillCommandExamples() {{
       const origin = window.location.origin;
       exampleCurlUpload.textContent = `curl -T myfile.txt ${{origin}}/myfile.txt`;
-      examplePowerShellUpload.textContent = String.raw`Invoke-WebRequest -Uri "${{origin}}/myfile.txt" -Method PUT -InFile "C:\\Path\\To\\myfile.txt"`;
+      examplePowerShellUpload.textContent = `Invoke-WebRequest -Uri "${{origin}}/myfile.txt" -Method PUT -InFile "C:\\\\Path\\\\To\\\\myfile.txt"`;
       exampleDownloadZip.textContent = `curl -L ${{origin}}/download.zip -o shared-files.zip`;
     }}
 
@@ -1475,7 +1475,7 @@ def build_index_html(
       if (!command) return;
 
       if (!cliEnabled) {{
-        appendTerminal("\nCLI is disabled. Restart with --enable-cli.\n");
+        appendTerminal("\\nCLI is disabled. Restart with --enable-cli.\\n");
         return;
       }}
 
@@ -1487,7 +1487,7 @@ def build_index_html(
       }}
 
       commandButton.disabled = true;
-      appendTerminal(`\n$ ${{command}}\n`);
+      appendTerminal(`\\n$ ${{command}}\\n`);
 
       try {{
         const response = await fetch("/run-command", {{
@@ -1500,16 +1500,16 @@ def build_index_html(
         const result = await response.json();
 
         if (!response.ok) {{
-          appendTerminal(`${{result.error || "Command failed"}}\n`);
+          appendTerminal(`${{result.error || "Command failed"}}\\n`);
           return;
         }}
 
         if (result.stdout) appendTerminal(result.stdout);
         if (result.stderr) appendTerminal(result.stderr);
         if (!result.stdout && !result.stderr && result.returncode === 0) appendTerminal("exit 0\\n");
-        if (result.returncode !== 0) appendTerminal(`[exit ${{result.returncode}}]\n`);
+        if (result.returncode !== 0) appendTerminal(`[exit ${{result.returncode}}]\\n`);
       }} catch (error) {{
-        appendTerminal(`${{error.message}}\n`);
+        appendTerminal(`${{error.message}}\\n`);
       }} finally {{
         commandButton.disabled = false;
         commandInput.focus();

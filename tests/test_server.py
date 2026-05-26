@@ -541,6 +541,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'data-cli-enabled="false"' in page
     assert "CLI disabled. Restart with --enable-cli" in page
     assert 'onsubmit="return false"' in page
+    assert 'appendTerminal("\\nCLI is disabled. Restart with --enable-cli.\\n");' in page
+    assert 'appendTerminal(`\\n$ ${command}\\n`);' in page
     assert 'appendTerminal("exit 0\\n");' in page
+    assert 'appendTerminal("\nCLI is disabled' not in page
+    assert 'String.raw`Invoke-WebRequest' not in page
+    assert 'C:\\\\Path\\\\To\\\\myfile.txt' in page
     assert 'command === "clear"' in page
     assert "?." not in page
