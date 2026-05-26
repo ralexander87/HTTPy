@@ -12,7 +12,7 @@ import zipfile
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import BinaryIO
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 CHUNK_SIZE = 1024 * 1024
 SIZE_UNITS = {
@@ -157,6 +157,56 @@ def iter_shared_files(root_dir: Path) -> list[Path]:
     return sorted(path for path in root.rglob("*") if path.is_file())
 
 
+def resolve_selected_path(root_dir: Path, selected_path: str) -> Path:
+    root = root_dir.resolve()
+    relative_path = Path(selected_path.strip("/"))
+
+    if not selected_path or relative_path.is_absolute() or ".." in relative_path.parts:
+        raise ValueError("invalid selected path")
+
+    target_path = (root / relative_path).resolve()
+
+    try:
+        target_path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("selected path escapes shared directory") from exc
+
+    return target_path
+
+
+def files_for_zip(root_dir: Path, selected_paths: list[str] | None = None) -> list[Path]:
+    root = root_dir.resolve()
+
+    if not selected_paths:
+        return iter_shared_files(root)
+
+    selected_files = []
+    seen_paths = set()
+
+    for selected_path in selected_paths:
+        target_path = resolve_selected_path(root, selected_path)
+
+        if not target_path.exists():
+            raise FileNotFoundError(selected_path)
+
+        if target_path.is_dir():
+            candidate_paths = iter_shared_files(target_path)
+        elif target_path.is_file():
+            candidate_paths = [target_path]
+        else:
+            candidate_paths = []
+
+        for candidate_path in candidate_paths:
+            resolved_path = candidate_path.resolve()
+            if resolved_path in seen_paths:
+                continue
+
+            seen_paths.add(resolved_path)
+            selected_files.append(resolved_path)
+
+    return sorted(selected_files)
+
+
 def path_to_url(path: Path) -> str:
     return "/" + quote(path.as_posix(), safe="/")
 
@@ -216,11 +266,14 @@ def render_file_row(root_dir: Path, path: Path) -> str:
     relative_path = path.relative_to(root_dir.resolve())
     stat = path.stat()
     file_url = path_to_url(relative_path)
+    checkbox_value = html.escape(relative_path.as_posix(), quote=True)
     display_name = html.escape(relative_path.name)
+    checkbox_label = html.escape(f"Select {relative_path.as_posix()}", quote=True)
     modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
 
     return (
         "<div class=\"file-row\">"
+        f"<input class=\"tree-check file-check\" type=\"checkbox\" value=\"{checkbox_value}\" aria-label=\"{checkbox_label}\">"
         f"<a class=\"file-name\" href=\"{file_url}\">{display_name}</a>"
         f"<span class=\"file-meta\">{format_size(stat.st_size)}</span>"
         f"<span class=\"file-meta\">{modified}</span>"
@@ -229,20 +282,24 @@ def render_file_row(root_dir: Path, path: Path) -> str:
     )
 
 
-def render_tree_node(root_dir: Path, node: dict) -> str:
+def render_tree_node(root_dir: Path, node: dict, current_path: Path = Path()) -> str:
     parts = []
 
     for dirname, child in sorted(node["dirs"].items(), key=lambda item: item[0].lower()):
+        folder_path = current_path / dirname
+        checkbox_value = html.escape(folder_path.as_posix(), quote=True)
         folder_name = html.escape(dirname)
+        checkbox_label = html.escape(f"Select {folder_path.as_posix()}", quote=True)
         file_count = tree_file_count(child)
         parts.append(
             "<details class=\"folder\">"
             "<summary>"
             "<span class=\"arrow\">&gt;</span>"
+            f"<input class=\"tree-check folder-check\" type=\"checkbox\" value=\"{checkbox_value}\" aria-label=\"{checkbox_label}\">"
             f"<span class=\"folder-name\">{folder_name}</span>"
             f"<span class=\"folder-count\">{file_count}</span>"
             "</summary>"
-            f"<div class=\"children\">{render_tree_node(root_dir, child)}</div>"
+            f"<div class=\"children\">{render_tree_node(root_dir, child, folder_path)}</div>"
             "</details>"
         )
 
@@ -380,6 +437,12 @@ def build_index_html(
       cursor: pointer;
     }}
     .button:hover {{ background: var(--accent-strong); }}
+    .button:disabled {{
+      border-color: var(--line);
+      background: transparent;
+      color: var(--muted);
+      cursor: not-allowed;
+    }}
     .button.secondary {{
       background: transparent;
       color: var(--accent);
@@ -396,6 +459,12 @@ def build_index_html(
       gap: 12px;
       margin-bottom: 8px;
     }}
+    .file-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }}
     .file-tree {{
       background: var(--panel);
       border: 1px solid var(--line);
@@ -411,7 +480,7 @@ def build_index_html(
     summary {{
       min-height: 44px;
       display: grid;
-      grid-template-columns: 24px minmax(0, 1fr) auto;
+      grid-template-columns: 24px 20px minmax(0, 1fr) auto;
       align-items: center;
       gap: 8px;
       padding: 0 12px;
@@ -443,6 +512,12 @@ def build_index_html(
       font-size: 13px;
       white-space: nowrap;
     }}
+    .tree-check {{
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--accent);
+    }}
     .children {{
       margin-left: 24px;
       border-left: 1px solid var(--line);
@@ -450,7 +525,7 @@ def build_index_html(
     .file-row {{
       min-height: 44px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto auto;
+      grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
       align-items: center;
       gap: 12px;
       padding: 7px 12px;
@@ -491,8 +566,12 @@ def build_index_html(
     @media (max-width: 720px) {{
       main {{ width: min(100% - 20px, 1040px); margin-top: 18px; }}
       header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
+      .file-actions {{ justify-content: flex-start; }}
       .stats {{ justify-content: flex-start; }}
-      .file-row {{ grid-template-columns: minmax(0, 1fr); align-items: start; gap: 6px; }}
+      summary {{ grid-template-columns: 24px 20px minmax(0, 1fr); }}
+      .folder-count {{ grid-column: 3; }}
+      .file-row {{ grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 6px; }}
+      .file-meta, .file-row .button {{ grid-column: 2; justify-self: start; }}
       .file-meta {{ white-space: normal; }}
       .children {{ margin-left: 14px; }}
     }}
@@ -526,7 +605,10 @@ def build_index_html(
     <section>
       <div class="file-head">
         <h2>Files</h2>
-        <a class="button secondary" href="/download.zip">Download ZIP</a>
+        <div class="file-actions">
+          <button id="download-selected" class="button" type="button" disabled>Download Selected</button>
+          <a class="button secondary" href="/download.zip">Download ZIP</a>
+        </div>
       </div>
       {file_tree}
     </section>
@@ -539,9 +621,24 @@ def build_index_html(
     const progress = document.getElementById("progress");
     const status = document.getElementById("status");
     const maxUploadSize = Number(document.body.dataset.maxUploadSize || "0");
+    const selectedDownload = document.getElementById("download-selected");
+    const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
 
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
+    selectedDownload.addEventListener("click", downloadSelected);
+
+    for (const check of treeChecks) {{
+      check.addEventListener("click", event => event.stopPropagation());
+      check.addEventListener("change", () => {{
+        if (check.classList.contains("folder-check")) {{
+          setDescendantChecks(check);
+        }}
+
+        updateAncestorChecks(check);
+        updateSelectedDownload();
+      }});
+    }}
 
     for (const eventName of ["dragenter", "dragover"]) {{
       zone.addEventListener(eventName, event => {{
@@ -558,6 +655,73 @@ def build_index_html(
     }}
 
     zone.addEventListener("drop", event => uploadFiles(event.dataTransfer.files));
+
+    function setDescendantChecks(folderCheck) {{
+      const folder = folderCheck.closest("details.folder");
+      if (!folder) return;
+
+      for (const check of folder.querySelectorAll(":scope > .children .tree-check")) {{
+        check.checked = folderCheck.checked;
+        check.indeterminate = false;
+      }}
+    }}
+
+    function updateAncestorChecks(changedCheck) {{
+      let folder = changedCheck.closest("details.folder");
+
+      if (changedCheck.classList.contains("folder-check")) {{
+        folder = folder?.parentElement?.closest("details.folder");
+      }}
+
+      while (folder) {{
+        const folderCheck = folder.querySelector(":scope > summary > .folder-check");
+        const childChecks = Array.from(folder.querySelectorAll(":scope > .children .tree-check"));
+        const checkedCount = childChecks.filter(check => check.checked).length;
+        const partialCount = childChecks.filter(check => check.indeterminate).length;
+
+        folderCheck.checked = childChecks.length > 0 && checkedCount === childChecks.length;
+        folderCheck.indeterminate = checkedCount > 0 && checkedCount < childChecks.length || partialCount > 0;
+        folder = folder.parentElement?.closest("details.folder");
+      }}
+    }}
+
+    function hasCheckedAncestorFolder(check) {{
+      let folder = check.closest("details.folder");
+
+      if (check.classList.contains("folder-check")) {{
+        folder = folder?.parentElement?.closest("details.folder");
+      }}
+
+      while (folder) {{
+        const folderCheck = folder.querySelector(":scope > summary > .folder-check");
+        if (folderCheck?.checked) return true;
+        folder = folder.parentElement?.closest("details.folder");
+      }}
+
+      return false;
+    }}
+
+    function selectedPaths() {{
+      return treeChecks
+        .filter(check => check.checked && !hasCheckedAncestorFolder(check))
+        .map(check => check.value);
+    }}
+
+    function updateSelectedDownload() {{
+      selectedDownload.disabled = selectedPaths().length === 0;
+    }}
+
+    function downloadSelected() {{
+      const paths = selectedPaths();
+      if (!paths.length) return;
+
+      const query = new URLSearchParams();
+      for (const path of paths) {{
+        query.append("path", path);
+      }}
+
+      window.location.href = "/download.zip?" + query.toString();
+    }}
 
     async function uploadFiles(files) {{
       const queue = Array.from(files || []);
@@ -613,14 +777,16 @@ class UploadHandler(SimpleHTTPRequestHandler):
     overwrite_uploads = False
 
     def do_GET(self) -> None:
-        path = urlsplit(self.path).path
+        request_url = urlsplit(self.path)
+        path = request_url.path
 
         if path in {"/", "/index.html"}:
             self.send_index_page()
             return
 
         if path == "/download.zip":
-            self.send_zip_archive()
+            selected_paths = parse_qs(request_url.query).get("path")
+            self.send_zip_archive(selected_paths)
             return
 
         try:
@@ -702,10 +868,19 @@ class UploadHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_zip_archive(self) -> None:
+    def send_zip_archive(self, selected_paths: list[str] | None = None) -> None:
         root = self.upload_dir.resolve()
-        files = iter_shared_files(root)
+        try:
+            files = files_for_zip(root, selected_paths)
+        except ValueError as exc:
+            self.send_error(400, str(exc))
+            return
+        except FileNotFoundError as exc:
+            self.send_error(404, f"Selected path not found: {exc}")
+            return
+
         total_size = 0
+        archive_name = "selected-files.zip" if selected_paths else "shared-files.zip"
 
         with tempfile.TemporaryFile() as archive:
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_file:
@@ -719,12 +894,13 @@ class UploadHandler(SimpleHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", 'attachment; filename="shared-files.zip"')
+            self.send_header("Content-Disposition", f'attachment; filename="{archive_name}"')
             self.send_header("Content-Length", str(archive_size))
             self.end_headers()
             shutil.copyfileobj(archive, self.wfile)
 
-        self.log_event(f"Downloaded ZIP ({len(files)} files, {format_size(total_size)})")
+        zip_kind = "selected ZIP" if selected_paths else "ZIP"
+        self.log_event(f"Downloaded {zip_kind} ({len(files)} files, {format_size(total_size)})")
 
     def log_event(self, message: str) -> None:
         timestamp = time.strftime("%H:%M:%S")

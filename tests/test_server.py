@@ -10,6 +10,7 @@ import pytest
 
 from upload_server.server import (
     build_index_html,
+    files_for_zip,
     make_handler,
     open_upload_target,
     parse_duration,
@@ -133,6 +134,28 @@ def test_download_zip_contains_shared_files(tmp_path: Path) -> None:
         assert sorted(archive.namelist()) == ["alpha.txt", "nested/beta.txt"]
 
 
+def test_download_zip_can_include_only_selected_folder(tmp_path: Path) -> None:
+    (tmp_path / "alpha.txt").write_text("alpha", encoding="utf-8")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "beta.txt").write_text("beta", encoding="utf-8")
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/download.zip?path=nested")
+        response = connection.getresponse()
+        assert response.status == 200
+        archive_bytes = response.read()
+        connection.close()
+
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        assert archive.namelist() == ["nested/beta.txt"]
+
+
+def test_files_for_zip_rejects_parent_traversal(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="invalid selected path"):
+        files_for_zip(tmp_path, ["../secret.txt"])
+
+
 def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> None:
     (tmp_path / "root.txt").write_text("root", encoding="utf-8")
     (tmp_path / "docs").mkdir()
@@ -142,6 +165,9 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
 
     assert '<details class="folder">' in page
     assert '<span class="arrow">&gt;</span>' in page
+    assert '<input class="tree-check folder-check" type="checkbox" value="docs"' in page
+    assert '<input class="tree-check file-check" type="checkbox" value="docs/note.txt"' in page
     assert '<span class="folder-name">docs</span>' in page
     assert '<a class="file-name" href="/docs/note.txt">note.txt</a>' in page
     assert '<a class="file-name" href="/root.txt">root.txt</a>' in page
+    assert 'id="download-selected"' in page
