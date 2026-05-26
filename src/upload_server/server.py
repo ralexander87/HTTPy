@@ -4,6 +4,7 @@ import argparse
 import html
 import json
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -19,6 +20,9 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 CHUNK_SIZE = 1024 * 1024
 MAX_COMMAND_BODY_SIZE = 64 * 1024
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+HIDDEN_DIR_NAMES = {".git", ".hg", ".svn", ".venv", "venv", "__pycache__", ".pytest_cache"}
+HIDDEN_FILE_NAMES = {".env", ".env.local", ".envrc"}
+HIDDEN_FILE_SUFFIXES = {".pyc", ".pyo", ".pyd"}
 SIZE_UNITS = {
     "": 1,
     "B": 1,
@@ -168,6 +172,10 @@ def setting_duration_value(seconds: int | None) -> str:
     return format_duration(seconds)
 
 
+def generate_admin_token() -> str:
+    return secrets.token_urlsafe(9)
+
+
 class RuntimeSettings:
     def __init__(
         self,
@@ -175,11 +183,17 @@ class RuntimeSettings:
         overwrite_uploads: bool,
         command_timeout: int | None,
         stop_after: int | None,
+        cli_enabled: bool,
+        show_hidden: bool,
+        admin_token: str,
     ) -> None:
         self.max_upload_size = max_upload_size
         self.overwrite_uploads = overwrite_uploads
         self.command_timeout = command_timeout
         self.stop_after = stop_after
+        self.cli_enabled = cli_enabled
+        self.show_hidden = show_hidden
+        self.admin_token = admin_token
         self.auto_stop_deadline: float | None = None
         self.auto_stop_timer: threading.Timer | None = None
         self.lock = threading.Lock()
@@ -196,6 +210,8 @@ class RuntimeSettings:
                 "command_timeout": self.command_timeout,
                 "stop_after": self.stop_after,
                 "auto_stop_remaining": remaining,
+                "cli_enabled": self.cli_enabled,
+                "show_hidden": self.show_hidden,
             }
 
     def apply_updates(self, server: ThreadingHTTPServer, updates: dict) -> None:
@@ -265,6 +281,8 @@ def settings_to_json(settings: RuntimeSettings) -> dict:
         "stop_after_label": format_duration(stop_after),
         "auto_stop_remaining": auto_stop_remaining,
         "auto_stop_remaining_label": format_duration(auto_stop_remaining),
+        "cli_enabled": snapshot["cli_enabled"],
+        "show_hidden": snapshot["show_hidden"],
     }
 
 
@@ -291,7 +309,43 @@ def parse_settings_payload(payload: object) -> dict:
     return updates
 
 
-def resolve_request_path(root_dir: Path, request_path: str) -> Path:
+def relative_path_from_root(root_dir: Path, path: Path) -> Path:
+    try:
+        return path.resolve().relative_to(root_dir.resolve())
+    except ValueError as exc:
+        raise ValueError("path escapes shared directory") from exc
+
+
+def is_hidden_relative_path(relative_path: Path) -> bool:
+    parts = relative_path.parts
+    if any(part.startswith(".") for part in parts):
+        return True
+    if any(part in HIDDEN_DIR_NAMES for part in parts[:-1]):
+        return True
+    if relative_path.name in HIDDEN_FILE_NAMES:
+        return True
+    return relative_path.suffix in HIDDEN_FILE_SUFFIXES
+
+
+def ensure_shared_path_allowed(root_dir: Path, path: Path, show_hidden: bool) -> Path:
+    relative_path = relative_path_from_root(root_dir, path)
+
+    if not show_hidden and is_hidden_relative_path(relative_path):
+        raise PermissionError("hidden paths are not shared")
+
+    return relative_path
+
+
+def is_shared_path_allowed(root_dir: Path, path: Path, show_hidden: bool) -> bool:
+    try:
+        ensure_shared_path_allowed(root_dir, path, show_hidden)
+    except (PermissionError, ValueError, OSError):
+        return False
+
+    return True
+
+
+def resolve_request_path(root_dir: Path, request_path: str, show_hidden: bool = False) -> Path:
     root = root_dir.resolve()
     parsed_path = unquote(urlsplit(request_path).path)
     relative_path = Path(parsed_path.lstrip("/"))
@@ -301,16 +355,13 @@ def resolve_request_path(root_dir: Path, request_path: str) -> Path:
 
     target_path = (root / relative_path).resolve()
 
-    try:
-        target_path.relative_to(root)
-    except ValueError as exc:
-        raise ValueError("path escapes shared directory") from exc
+    ensure_shared_path_allowed(root, target_path, show_hidden)
 
     return target_path
 
 
-def resolve_upload_path(upload_dir: Path, request_path: str) -> Path:
-    target_path = resolve_request_path(upload_dir, request_path)
+def resolve_upload_path(upload_dir: Path, request_path: str, show_hidden: bool = False) -> Path:
+    target_path = resolve_request_path(upload_dir, request_path, show_hidden)
     relative_path = target_path.relative_to(upload_dir.resolve())
 
     if not relative_path.name:
@@ -346,12 +397,16 @@ def open_upload_target(target_path: Path, overwrite: bool) -> tuple[Path, Binary
     raise RuntimeError("could not find an available upload filename")
 
 
-def iter_shared_files(root_dir: Path) -> list[Path]:
+def iter_shared_files(root_dir: Path, show_hidden: bool = False) -> list[Path]:
     root = root_dir.resolve()
-    return sorted(path for path in root.rglob("*") if path.is_file())
+    return sorted(
+        path.resolve()
+        for path in root.rglob("*")
+        if path.is_file() and is_shared_path_allowed(root, path, show_hidden)
+    )
 
 
-def resolve_selected_path(root_dir: Path, selected_path: str) -> Path:
+def resolve_selected_path(root_dir: Path, selected_path: str, show_hidden: bool = False) -> Path:
     root = root_dir.resolve()
     relative_path = Path(selected_path.strip("/"))
 
@@ -359,32 +414,32 @@ def resolve_selected_path(root_dir: Path, selected_path: str) -> Path:
         raise ValueError("invalid selected path")
 
     target_path = (root / relative_path).resolve()
-
-    try:
-        target_path.relative_to(root)
-    except ValueError as exc:
-        raise ValueError("selected path escapes shared directory") from exc
+    ensure_shared_path_allowed(root, target_path, show_hidden)
 
     return target_path
 
 
-def files_for_zip(root_dir: Path, selected_paths: list[str] | None = None) -> list[Path]:
+def files_for_zip(
+    root_dir: Path,
+    selected_paths: list[str] | None = None,
+    show_hidden: bool = False,
+) -> list[Path]:
     root = root_dir.resolve()
 
     if not selected_paths:
-        return iter_shared_files(root)
+        return iter_shared_files(root, show_hidden)
 
     selected_files = []
     seen_paths = set()
 
     for selected_path in selected_paths:
-        target_path = resolve_selected_path(root, selected_path)
+        target_path = resolve_selected_path(root, selected_path, show_hidden)
 
         if not target_path.exists():
             raise FileNotFoundError(selected_path)
 
         if target_path.is_dir():
-            candidate_paths = iter_shared_files(target_path)
+            candidate_paths = iter_shared_files(target_path, show_hidden)
         elif target_path.is_file():
             candidate_paths = [target_path]
         else:
@@ -517,9 +572,11 @@ def build_index_html(
     overwrite_uploads: bool,
     command_timeout: int | None = 30,
     stop_after: int | None = None,
+    cli_enabled: bool = False,
+    show_hidden: bool = False,
 ) -> bytes:
     root = upload_dir.resolve()
-    files = iter_shared_files(root)
+    files = iter_shared_files(root, show_hidden)
     total_size = sum(path.stat().st_size for path in files)
     file_tree = render_file_tree(root, files)
     max_size_text = format_size(max_upload_size)
@@ -530,6 +587,15 @@ def build_index_html(
     command_timeout_value = html.escape(setting_duration_value(command_timeout), quote=True)
     stop_after_value = html.escape(setting_duration_value(stop_after), quote=True)
     overwrite_checked = " checked" if overwrite_uploads else ""
+    cli_text = "enabled" if cli_enabled else "disabled"
+    hidden_text = "shown" if show_hidden else "hidden"
+    terminal_header_text = "shell" if cli_enabled else "disabled"
+    terminal_initial = (
+        f"$ pwd\n{html.escape(str(root))}"
+        if cli_enabled
+        else "CLI disabled. Restart with --enable-cli to allow browser commands."
+    )
+    command_disabled = "" if cli_enabled else " disabled"
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -607,7 +673,7 @@ def build_index_html(
     }}
     .settings-form {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(120px, 1fr)) auto auto;
+      grid-template-columns: repeat(4, minmax(120px, 1fr)) auto auto;
       gap: 10px;
       align-items: end;
     }}
@@ -618,7 +684,8 @@ def build_index_html(
       font-size: 12px;
       font-weight: 700;
     }}
-    .setting-field input[type="text"] {{
+    .setting-field input[type="text"],
+    .setting-field input[type="password"] {{
       min-width: 0;
       min-height: 36px;
       border: 1px solid var(--line);
@@ -892,7 +959,7 @@ def build_index_html(
     }}
   </style>
 </head>
-<body data-max-upload-size="{max_upload_size or 0}">
+<body data-max-upload-size="{max_upload_size or 0}" data-cli-enabled="{str(cli_enabled).lower()}">
   <main>
     <header class="top">
       <div>
@@ -906,6 +973,8 @@ def build_index_html(
         <span id="stat-overwrite" class="pill">{overwrite_text}</span>
         <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
         <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
+        <span class="pill">CLI {cli_text}</span>
+        <span class="pill">Hidden {hidden_text}</span>
       </div>
     </header>
 
@@ -922,6 +991,10 @@ def build_index_html(
         <label class="setting-field">
           Stop after
           <input id="settings-stop-after" type="text" value="{stop_after_value}" placeholder="off">
+        </label>
+        <label class="setting-field">
+          Admin token
+          <input id="admin-token" type="password" autocomplete="off" placeholder="token">
         </label>
         <label class="setting-check">
           <input id="settings-overwrite" type="checkbox"{overwrite_checked}>
@@ -946,14 +1019,13 @@ def build_index_html(
       <section class="panel terminal">
         <header class="terminal-head">
           <h2>CLI</h2>
-          <span class="muted">shell</span>
+          <span class="muted">{terminal_header_text}</span>
         </header>
-        <pre id="terminal-output" class="terminal-output">$ pwd
-{html.escape(str(root))}</pre>
+        <pre id="terminal-output" class="terminal-output">{terminal_initial}</pre>
         <form id="command-form" class="command-form" onsubmit="return false">
           <span class="prompt">$</span>
-          <input id="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
-          <button class="button" type="submit">Run</button>
+          <input id="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command"{command_disabled}>
+          <button class="button" type="submit"{command_disabled}>Run</button>
         </form>
       </section>
     </div>
@@ -977,6 +1049,7 @@ def build_index_html(
     const progress = document.getElementById("progress");
     const status = document.getElementById("status");
     let maxUploadSize = Number(document.body.dataset.maxUploadSize || "0");
+    const cliEnabled = document.body.dataset.cliEnabled === "true";
     const selectedDownload = document.getElementById("download-selected");
     const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
     const settingsForm = document.getElementById("settings-form");
@@ -984,6 +1057,7 @@ def build_index_html(
     const settingsCommandTimeout = document.getElementById("settings-command-timeout");
     const settingsStopAfter = document.getElementById("settings-stop-after");
     const settingsOverwrite = document.getElementById("settings-overwrite");
+    const adminToken = document.getElementById("admin-token");
     const settingsSave = document.getElementById("settings-save");
     const settingsStatus = document.getElementById("settings-status");
     const statUploadLimit = document.getElementById("stat-upload-limit");
@@ -1000,6 +1074,7 @@ def build_index_html(
     selectedDownload.addEventListener("click", downloadSelected);
     settingsForm.addEventListener("submit", saveSettings);
     commandForm.addEventListener("submit", runCommand);
+    adminToken.value = window.localStorage.getItem("uploadServerAdminToken") || "";
 
     for (const check of treeChecks) {{
       check.addEventListener("click", event => event.stopPropagation());
@@ -1106,6 +1181,22 @@ def build_index_html(
       terminalOutput.scrollTop = terminalOutput.scrollHeight;
     }}
 
+    function adminTokenValue() {{
+      const token = adminToken.value.trim();
+      if (token) {{
+        window.localStorage.setItem("uploadServerAdminToken", token);
+      }}
+      return token;
+    }}
+
+    function adminJsonHeaders() {{
+      const token = adminTokenValue();
+      return {{
+        "Content-Type": "application/json",
+        "X-Admin-Token": token
+      }};
+    }}
+
     function applySettings(settings) {{
       maxUploadSize = settings.max_upload_size || 0;
       document.body.dataset.maxUploadSize = String(maxUploadSize);
@@ -1126,12 +1217,17 @@ def build_index_html(
       settingsStatus.className = "settings-status";
       settingsStatus.textContent = "Saving";
 
+      if (!adminTokenValue()) {{
+        settingsStatus.className = "settings-status error";
+        settingsStatus.textContent = "Admin token required";
+        settingsSave.disabled = false;
+        return;
+      }}
+
       try {{
         const response = await fetch("/settings", {{
           method: "POST",
-          headers: {{
-            "Content-Type": "application/json"
-          }},
+          headers: adminJsonHeaders(),
           body: JSON.stringify({{
             max_size: settingsMaxSize.value.trim(),
             command_timeout: settingsCommandTimeout.value.trim(),
@@ -1163,6 +1259,11 @@ def build_index_html(
       const command = commandInput.value.trim();
       if (!command) return;
 
+      if (!cliEnabled) {{
+        appendTerminal("\nCLI is disabled. Restart with --enable-cli.\n");
+        return;
+      }}
+
       commandInput.value = "";
       if (command === "clear") {{
         terminalOutput.textContent = "";
@@ -1173,12 +1274,17 @@ def build_index_html(
       commandButton.disabled = true;
       appendTerminal(`\n$ ${{command}}\n`);
 
+      if (!adminTokenValue()) {{
+        appendTerminal("Admin token required.\n");
+        commandButton.disabled = false;
+        commandInput.focus();
+        return;
+      }}
+
       try {{
         const response = await fetch("/run-command", {{
           method: "POST",
-          headers: {{
-            "Content-Type": "application/json"
-          }},
+          headers: adminJsonHeaders(),
           body: JSON.stringify({{ command: command }})
         }});
         const result = await response.json();
@@ -1252,9 +1358,22 @@ class UploadHandler(SimpleHTTPRequestHandler):
     upload_dir: Path
     runtime_settings: RuntimeSettings
 
+    def is_admin_request(self) -> bool:
+        provided_token = self.headers.get("X-Admin-Token", "")
+        expected_token = self.runtime_settings.admin_token
+        return secrets.compare_digest(provided_token, expected_token)
+
+    def require_admin(self) -> bool:
+        if self.is_admin_request():
+            return True
+
+        self.send_json({"error": "Admin token required"}, status=403)
+        return False
+
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
         path = request_url.path
+        settings = self.runtime_settings.snapshot()
 
         if path in {"/", "/index.html"}:
             self.send_index_page()
@@ -1270,9 +1389,23 @@ class UploadHandler(SimpleHTTPRequestHandler):
             return
 
         try:
-            requested_path = resolve_request_path(self.upload_dir, self.path)
-        except ValueError:
+            requested_path = resolve_request_path(
+                self.upload_dir,
+                self.path,
+                settings["show_hidden"],
+            )
+        except PermissionError as exc:
+            self.send_error(403, str(exc))
+            return
+        except ValueError as exc:
+            self.send_error(400, str(exc))
+            return
+        except OSError:
             requested_path = None
+
+        if requested_path and requested_path.is_dir():
+            self.send_error(403, "directory listing is disabled")
+            return
 
         super().do_GET()
 
@@ -1286,7 +1419,14 @@ class UploadHandler(SimpleHTTPRequestHandler):
         settings = self.runtime_settings.snapshot()
 
         try:
-            requested_path = resolve_upload_path(self.upload_dir, self.path)
+            requested_path = resolve_upload_path(
+                self.upload_dir,
+                self.path,
+                settings["show_hidden"],
+            )
+        except PermissionError as exc:
+            self.send_error(403, str(exc))
+            return
         except ValueError as exc:
             self.send_error(400, str(exc))
             return
@@ -1355,6 +1495,13 @@ class UploadHandler(SimpleHTTPRequestHandler):
         self.send_error(404, "Not found")
 
     def run_command(self) -> None:
+        if not self.runtime_settings.cli_enabled:
+            self.send_json({"error": "CLI is disabled"}, status=403)
+            return
+
+        if not self.require_admin():
+            return
+
         content_length = self.headers.get("Content-Length")
         if content_length is None:
             self.send_json({"error": "Content-Length header is required"}, status=411)
@@ -1395,6 +1542,9 @@ class UploadHandler(SimpleHTTPRequestHandler):
         )
 
     def update_settings(self) -> None:
+        if not self.require_admin():
+            return
+
         content_length = self.headers.get("Content-Length")
         if content_length is None:
             self.send_json({"error": "Content-Length header is required"}, status=411)
@@ -1448,6 +1598,8 @@ class UploadHandler(SimpleHTTPRequestHandler):
             settings["overwrite_uploads"],
             settings["command_timeout"],
             settings["stop_after"],
+            settings["cli_enabled"],
+            settings["show_hidden"],
         )
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1458,8 +1610,9 @@ class UploadHandler(SimpleHTTPRequestHandler):
 
     def send_zip_archive(self, selected_paths: list[str] | None = None) -> None:
         root = self.upload_dir.resolve()
+        settings = self.runtime_settings.snapshot()
         try:
-            files = files_for_zip(root, selected_paths)
+            files = files_for_zip(root, selected_paths, settings["show_hidden"])
         except ValueError as exc:
             self.send_error(400, str(exc))
             return
@@ -1505,6 +1658,9 @@ def make_handler(
     overwrite_uploads: bool = False,
     command_timeout: int | None = 30,
     stop_after: int | None = None,
+    cli_enabled: bool = False,
+    show_hidden: bool = False,
+    admin_token: str | None = None,
     runtime_settings: RuntimeSettings | None = None,
 ) -> type[UploadHandler]:
     upload_dir = upload_dir.resolve()
@@ -1514,6 +1670,9 @@ def make_handler(
             overwrite_uploads,
             command_timeout,
             stop_after,
+            cli_enabled,
+            show_hidden,
+            admin_token or generate_admin_token(),
         )
 
     class ConfiguredUploadHandler(UploadHandler):
@@ -1528,6 +1687,8 @@ def make_handler(
 def print_useful_options() -> None:
     print("Useful options:")
     print("  --upload-dir PATH   Share/save files in another directory")
+    print("  --enable-cli        Allow browser CLI commands with admin token")
+    print("  --show-hidden       Share hidden/sensitive paths too")
     print("  --overwrite         Replace existing files instead of renaming duplicates")
     print("  --max-size 500MB    Reject uploads larger than this size")
     print("  --stop-after 30m    Stop automatically after a short session")
@@ -1545,13 +1706,20 @@ def run_server(
     overwrite_uploads: bool,
     stop_after: int | None,
     command_timeout: int | None,
+    cli_enabled: bool,
+    show_hidden: bool,
+    admin_token: str | None,
 ) -> None:
     upload_dir.mkdir(parents=True, exist_ok=True)
+    admin_token = admin_token or generate_admin_token()
     runtime_settings = RuntimeSettings(
         max_upload_size,
         overwrite_uploads,
         command_timeout,
         stop_after,
+        cli_enabled,
+        show_hidden,
+        admin_token,
     )
     handler_class = make_handler(upload_dir, runtime_settings=runtime_settings)
 
@@ -1563,8 +1731,14 @@ def run_server(
         print(f"Upload limit: {format_size(max_upload_size)}")
         print(f"Existing files: {'overwrite' if overwrite_uploads else 'rename'}")
         print(f"Command timeout: {format_duration(command_timeout)}")
+        print(f"CLI: {'enabled' if cli_enabled else 'disabled'}")
+        print(f"Hidden files: {'shown' if show_hidden else 'hidden'}")
+        print(f"Admin token: {admin_token}")
         if stop_after is not None:
             print(f"Auto-stop: {format_duration(stop_after)}")
+        if host in {"", "0.0.0.0"}:
+            print("Warning: anyone on this network can access uploads/downloads.")
+            print("CLI and settings require the admin token.")
         print("Open:")
         for url in server_urls(host if host else actual_host, actual_port):
             print(f"  {url}")
@@ -1609,6 +1783,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=30,
         help="Stop a browser CLI command after this duration. Use 0 to disable.",
     )
+    parser.add_argument(
+        "--enable-cli",
+        action="store_true",
+        help="Enable browser CLI commands. Requests still require the admin token.",
+    )
+    parser.add_argument(
+        "--show-hidden",
+        action="store_true",
+        help="List and serve hidden/sensitive paths such as .git and .env.",
+    )
+    parser.add_argument(
+        "--admin-token",
+        default=None,
+        help="Use a specific admin token instead of generating one.",
+    )
     return parser
 
 
@@ -1624,6 +1813,9 @@ def main(argv: list[str] | None = None) -> int:
             args.overwrite,
             args.stop_after,
             args.command_timeout,
+            args.enable_cli,
+            args.show_hidden,
+            args.admin_token,
         )
     except KeyboardInterrupt:
         print("\nServer stopped.")

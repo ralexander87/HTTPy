@@ -36,7 +36,7 @@ Open the printed URL in a browser. The page includes:
 - download links
 - `Download ZIP` for the whole shared directory
 - selected file/folder ZIP downloads
-- a lightweight CLI panel that runs commands in the shared directory
+- an optional lightweight CLI panel that runs commands in the shared directory
 - live settings for upload size, overwrite mode, command timeout, and auto-stop
 
 Existing files are not overwritten by default. If `photo.jpg` already exists, the
@@ -61,6 +61,15 @@ Invoke-WebRequest -Uri "http://SERVER_IP:8000/myfile.txt" -Method PUT -InFile "C
 ```
 
 ## Useful Options
+
+Enable the browser CLI:
+
+```bash
+python upload_server_standalone.py --enable-cli
+```
+
+The server prints an admin token on startup. Browser CLI commands and live
+settings changes require that token.
 
 Overwrite existing files:
 
@@ -92,4 +101,13 @@ Choose a different directory:
 python upload_server_standalone.py --upload-dir /path/to/share
 ```
 
-This server has no authentication. Use it on a trusted network.
+Show hidden/sensitive paths such as `.git`, `.env`, and `.venv`:
+
+```bash
+python upload_server_standalone.py --show-hidden
+```
+
+By default, hidden/sensitive paths are not listed or served, directory listings
+are disabled, and symlinks that escape the shared directory are blocked. File
+upload/download remains open to anyone who can reach the server, so use it on a
+trusted network.

@@ -13,13 +13,17 @@ from upload_server.server import (
     build_index_html,
     command_output_to_text,
     files_for_zip,
+    iter_shared_files,
     make_handler,
     open_upload_target,
     parse_duration,
     parse_size,
+    resolve_request_path,
     resolve_upload_path,
     run_shell_command,
 )
+
+TEST_ADMIN_TOKEN = "test-token"
 
 
 @contextmanager
@@ -28,8 +32,19 @@ def running_server(
     max_upload_size: int | None = None,
     overwrite_uploads: bool = False,
     command_timeout: int | None = 30,
+    cli_enabled: bool = False,
+    show_hidden: bool = False,
+    admin_token: str = TEST_ADMIN_TOKEN,
 ):
-    handler = make_handler(upload_dir, max_upload_size, overwrite_uploads, command_timeout)
+    handler = make_handler(
+        upload_dir,
+        max_upload_size,
+        overwrite_uploads,
+        command_timeout,
+        cli_enabled=cli_enabled,
+        show_hidden=show_hidden,
+        admin_token=admin_token,
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -160,6 +175,69 @@ def test_files_for_zip_rejects_parent_traversal(tmp_path: Path) -> None:
         files_for_zip(tmp_path, ["../secret.txt"])
 
 
+def test_hidden_files_are_filtered_by_default(tmp_path: Path) -> None:
+    (tmp_path / "public.txt").write_text("public", encoding="utf-8")
+    (tmp_path / ".env").write_text("secret", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("secret", encoding="utf-8")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "module.pyc").write_bytes(b"secret")
+
+    assert [path.name for path in iter_shared_files(tmp_path)] == ["public.txt"]
+
+    with pytest.raises(PermissionError, match="hidden paths"):
+        resolve_request_path(tmp_path, "/.env")
+
+
+def test_show_hidden_allows_hidden_files(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("secret", encoding="utf-8")
+
+    assert iter_shared_files(tmp_path, show_hidden=True) == [(tmp_path / ".env").resolve()]
+    assert resolve_request_path(tmp_path, "/.env", show_hidden=True) == (tmp_path / ".env").resolve()
+
+
+def test_hidden_file_get_is_blocked_by_default(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("secret", encoding="utf-8")
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/.env")
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+        connection.close()
+
+
+def test_directory_listing_is_blocked(tmp_path: Path) -> None:
+    (tmp_path / "folder").mkdir()
+    (tmp_path / "folder" / "file.txt").write_text("file", encoding="utf-8")
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/folder/")
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+        connection.close()
+
+
+def test_symlink_escape_is_not_shared(tmp_path: Path) -> None:
+    secret_dir = tmp_path / "outside"
+    secret_dir.mkdir()
+    secret_file = secret_dir / "secret.txt"
+    secret_file.write_text("secret", encoding="utf-8")
+
+    shared_dir = tmp_path / "shared"
+    shared_dir.mkdir()
+    link = shared_dir / "link.txt"
+    link.symlink_to(secret_file)
+
+    assert iter_shared_files(shared_dir) == []
+
+    with pytest.raises(ValueError, match="path escapes shared directory"):
+        resolve_request_path(shared_dir, "/link.txt")
+
+
 def test_run_shell_command_uses_shared_directory(tmp_path: Path) -> None:
     result = run_shell_command("printf hello > made.txt", tmp_path, timeout=5)
 
@@ -194,7 +272,54 @@ def test_run_shell_command_timeout_output_is_json_safe(tmp_path: Path) -> None:
 def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
     command = json.dumps({"command": "printf endpoint"})
 
-    with running_server(tmp_path) as (host, port):
+    with running_server(tmp_path, cli_enabled=True) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/run-command",
+            body=command,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(command)),
+                "X-Admin-Token": TEST_ADMIN_TOKEN,
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+    assert payload["returncode"] == 0
+    assert payload["stdout"] == "endpoint"
+
+
+def test_run_command_endpoint_requires_cli_enabled(tmp_path: Path) -> None:
+    command = json.dumps({"command": "printf endpoint"})
+
+    with running_server(tmp_path, cli_enabled=False) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/run-command",
+            body=command,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(command)),
+                "X-Admin-Token": TEST_ADMIN_TOKEN,
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 403
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+    assert payload["error"] == "CLI is disabled"
+
+
+def test_run_command_endpoint_requires_admin_token(tmp_path: Path) -> None:
+    command = json.dumps({"command": "printf endpoint"})
+
+    with running_server(tmp_path, cli_enabled=True) as (host, port):
         connection = http.client.HTTPConnection(host, port)
         connection.request(
             "POST",
@@ -206,12 +331,11 @@ def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
             },
         )
         response = connection.getresponse()
-        assert response.status == 200
+        assert response.status == 403
         payload = json.loads(response.read().decode("utf-8"))
         connection.close()
 
-    assert payload["returncode"] == 0
-    assert payload["stdout"] == "endpoint"
+    assert payload["error"] == "Admin token required"
 
 
 def test_settings_endpoint_updates_upload_limit_without_restart(tmp_path: Path) -> None:
@@ -233,6 +357,7 @@ def test_settings_endpoint_updates_upload_limit_without_restart(tmp_path: Path) 
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(settings)),
+                "X-Admin-Token": TEST_ADMIN_TOKEN,
             },
         )
         response = connection.getresponse()
@@ -272,6 +397,7 @@ def test_settings_endpoint_rejects_invalid_size(tmp_path: Path) -> None:
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(settings)),
+                "X-Admin-Token": TEST_ADMIN_TOKEN,
             },
         )
         response = connection.getresponse()
@@ -280,6 +406,28 @@ def test_settings_endpoint_rejects_invalid_size(tmp_path: Path) -> None:
         connection.close()
 
     assert "Use a size" in payload["error"]
+
+
+def test_settings_endpoint_requires_admin_token(tmp_path: Path) -> None:
+    settings = json.dumps({"max_size": "3"})
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/settings",
+            body=settings,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(settings)),
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 403
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+    assert payload["error"] == "Admin token required"
 
 
 def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> None:
@@ -302,8 +450,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="settings-command-timeout"' in page
     assert 'id="settings-stop-after"' in page
     assert 'id="settings-overwrite"' in page
+    assert 'id="admin-token"' in page
     assert 'id="command-form"' in page
     assert 'id="terminal-output"' in page
+    assert 'data-cli-enabled="false"' in page
+    assert "CLI disabled. Restart with --enable-cli" in page
     assert 'onsubmit="return false"' in page
     assert 'appendTerminal("exit 0\\n");' in page
     assert 'command === "clear"' in page
