@@ -933,11 +933,17 @@ def build_index_html(
     }}
     .command-form {{
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr);
       gap: 8px;
       align-items: center;
       padding: 10px;
       border-top: 1px solid var(--line);
+    }}
+    .command-actions {{
+      grid-column: 2;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
     }}
     .prompt {{
       color: var(--muted);
@@ -1148,7 +1154,10 @@ def build_index_html(
         <form id="command-form" class="command-form" onsubmit="return false">
           <span class="prompt">$</span>
           <input id="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command"{command_disabled}>
-          <button class="button" type="submit"{command_disabled}>Run</button>
+          <div class="command-actions">
+            <button id="run-command" class="button" type="submit"{command_disabled}>Run</button>
+            <button id="clear-command" class="button secondary" type="button"{command_disabled}>Clear</button>
+          </div>
         </form>
       </section>
     </div>
@@ -1216,7 +1225,8 @@ def build_index_html(
     const commandForm = document.getElementById("command-form");
     const commandInput = document.getElementById("command-input");
     const terminalOutput = document.getElementById("terminal-output");
-    const commandButton = commandForm.querySelector("button");
+    const commandButton = document.getElementById("run-command");
+    const clearCommandButton = document.getElementById("clear-command");
 
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
@@ -1225,6 +1235,7 @@ def build_index_html(
     refreshFiles.addEventListener("click", () => window.location.reload());
     settingsForm.addEventListener("submit", saveSettings);
     commandForm.addEventListener("submit", runCommand);
+    clearCommandButton.addEventListener("click", runClearCommand);
     adminToken.value = window.localStorage.getItem("uploadServerAdminToken") || "";
     updateCommandPresets();
 
@@ -1393,7 +1404,8 @@ def build_index_html(
     }}
 
     function setCommandRunning(isRunning) {{
-      commandButton.disabled = isRunning;
+      commandButton.disabled = isRunning || !cliEnabled;
+      clearCommandButton.disabled = isRunning || !cliEnabled;
       for (const button of runPresetButtons) {{
         button.disabled = isRunning || !cliEnabled;
       }}
@@ -1481,6 +1493,10 @@ def build_index_html(
       const command = commandInput.value.trim();
       commandInput.value = "";
       await executeCommand(command);
+    }}
+
+    async function runClearCommand() {{
+      await executeCommand("clear");
     }}
 
     async function executeCommand(command) {{

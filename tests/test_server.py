@@ -539,6 +539,9 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="settings-overwrite"' in page
     assert 'id="admin-token"' in page
     assert 'id="command-form"' in page
+    assert 'class="command-actions"' in page
+    assert 'id="run-command"' in page
+    assert 'id="clear-command"' in page
     assert 'id="terminal-output"' in page
     assert 'data-cli-enabled="false"' in page
     assert "CLI disabled. Restart with --enable-cli" in page
@@ -552,6 +555,9 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'commandSizeSelected.textContent = `du -sh -- ${args}`;' in page
     assert 'commandStatSelected.textContent = `stat -- ${args}`;' in page
     assert 'async function executeCommand(command)' in page
+    assert 'clearCommandButton.addEventListener("click", runClearCommand);' in page
+    assert 'async function runClearCommand()' in page
+    assert 'await executeCommand("clear");' in page
     assert 'appendTerminal("\nCLI is disabled' not in page
     assert 'String.raw`Invoke-WebRequest' not in page
     assert 'command === "clear"' in page
