@@ -12,6 +12,7 @@ import pytest
 from upload_server.server import (
     build_index_html,
     command_output_to_text,
+    delete_selected_paths,
     files_for_zip,
     iter_shared_files,
     make_handler,
@@ -173,6 +174,30 @@ def test_download_zip_can_include_only_selected_folder(tmp_path: Path) -> None:
 def test_files_for_zip_rejects_parent_traversal(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid selected path"):
         files_for_zip(tmp_path, ["../secret.txt"])
+
+
+def test_delete_selected_paths_removes_selected_files_and_folders(tmp_path: Path) -> None:
+    (tmp_path / "keep.txt").write_text("keep", encoding="utf-8")
+    (tmp_path / "remove.txt").write_text("remove", encoding="utf-8")
+    (tmp_path / "folder").mkdir()
+    (tmp_path / "folder" / "nested").mkdir()
+    (tmp_path / "folder" / "nested" / "note.txt").write_text("note", encoding="utf-8")
+
+    result = delete_selected_paths(tmp_path, ["remove.txt", "folder"])
+
+    assert result == {"deleted_files": 2, "deleted_dirs": 2}
+    assert (tmp_path / "keep.txt").exists()
+    assert not (tmp_path / "remove.txt").exists()
+    assert not (tmp_path / "folder").exists()
+
+
+def test_delete_selected_paths_blocks_hidden_by_default(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("secret", encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="hidden paths"):
+        delete_selected_paths(tmp_path, [".env"])
+
+    assert (tmp_path / ".env").exists()
 
 
 def test_hidden_files_are_filtered_by_default(tmp_path: Path) -> None:
@@ -430,6 +455,61 @@ def test_settings_endpoint_requires_admin_token(tmp_path: Path) -> None:
     assert payload["error"] == "Admin token required"
 
 
+def test_delete_endpoint_removes_selected_paths(tmp_path: Path) -> None:
+    (tmp_path / "keep.txt").write_text("keep", encoding="utf-8")
+    (tmp_path / "remove.txt").write_text("remove", encoding="utf-8")
+    (tmp_path / "folder").mkdir()
+    (tmp_path / "folder" / "note.txt").write_text("note", encoding="utf-8")
+    request_body = json.dumps({"paths": ["remove.txt", "folder"]})
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/delete",
+            body=request_body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(request_body)),
+                "X-Admin-Token": TEST_ADMIN_TOKEN,
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+    assert payload == {"deleted_files": 2, "deleted_dirs": 1}
+    assert (tmp_path / "keep.txt").exists()
+    assert not (tmp_path / "remove.txt").exists()
+    assert not (tmp_path / "folder").exists()
+
+
+def test_delete_endpoint_requires_admin_token(tmp_path: Path) -> None:
+    target = tmp_path / "remove.txt"
+    target.write_text("remove", encoding="utf-8")
+    request_body = json.dumps({"paths": ["remove.txt"]})
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/delete",
+            body=request_body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(request_body)),
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 403
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+    assert payload["error"] == "Admin token required"
+    assert target.exists()
+
+
 def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> None:
     (tmp_path / "root.txt").write_text("root", encoding="utf-8")
     (tmp_path / "docs").mkdir()
@@ -445,6 +525,12 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert '<a class="file-name" href="/docs/note.txt">note.txt</a>' in page
     assert '<a class="file-name" href="/root.txt">root.txt</a>' in page
     assert 'id="download-selected"' in page
+    assert 'id="delete-selected"' in page
+    assert 'id="refresh-files"' in page
+    assert 'id="example-curl-upload"' in page
+    assert 'id="example-powershell-upload"' in page
+    assert 'id="example-download-zip"' in page
+    assert 'class="button secondary small copy-command"' in page
     assert 'id="settings-form"' in page
     assert 'id="settings-max-size"' in page
     assert 'id="settings-command-timeout"' in page

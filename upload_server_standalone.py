@@ -419,6 +419,33 @@ def resolve_selected_path(root_dir: Path, selected_path: str, show_hidden: bool 
     return target_path
 
 
+def resolve_selected_original_path(
+    root_dir: Path,
+    selected_path: str,
+    show_hidden: bool = False,
+) -> Path:
+    root = root_dir.resolve()
+    relative_path = Path(selected_path.strip("/"))
+
+    if not selected_path or relative_path.is_absolute() or ".." in relative_path.parts:
+        raise ValueError("invalid selected path")
+
+    target_path = root / relative_path
+    resolved_path = target_path.resolve()
+
+    try:
+        resolved_relative_path = resolved_path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("path escapes shared directory") from exc
+
+    if not show_hidden and (
+        is_hidden_relative_path(relative_path) or is_hidden_relative_path(resolved_relative_path)
+    ):
+        raise PermissionError("hidden paths are not shared")
+
+    return target_path
+
+
 def files_for_zip(
     root_dir: Path,
     selected_paths: list[str] | None = None,
@@ -454,6 +481,73 @@ def files_for_zip(
             selected_files.append(resolved_path)
 
     return sorted(selected_files)
+
+
+def delete_selected_paths(
+    root_dir: Path,
+    selected_paths: list[str],
+    show_hidden: bool = False,
+) -> dict:
+    if not selected_paths:
+        raise ValueError("no selected paths")
+
+    root = root_dir.resolve()
+    deleted_files = []
+    deleted_dirs = []
+    seen_paths = set()
+
+    def delete_file(path: Path) -> None:
+        path_key = path.absolute() if path.is_symlink() else path.resolve()
+        if path_key in seen_paths:
+            return
+
+        seen_paths.add(path_key)
+        path.unlink()
+        deleted_files.append(path)
+
+    for selected_path in selected_paths:
+        target_path = resolve_selected_original_path(root, selected_path, show_hidden)
+
+        if not target_path.exists() and not target_path.is_symlink():
+            raise FileNotFoundError(selected_path)
+
+        if target_path.is_dir() and not target_path.is_symlink():
+            for child_path in sorted(target_path.rglob("*"), reverse=True):
+                if child_path.is_dir() and not child_path.is_symlink():
+                    continue
+
+                try:
+                    resolve_selected_original_path(
+                        root,
+                        child_path.relative_to(root).as_posix(),
+                        show_hidden,
+                    )
+                except (PermissionError, ValueError):
+                    continue
+                delete_file(child_path)
+
+            for child_path in sorted(
+                (path for path in target_path.rglob("*") if path.is_dir() and not path.is_symlink()),
+                reverse=True,
+            ):
+                try:
+                    child_path.rmdir()
+                except OSError:
+                    continue
+                deleted_dirs.append(child_path)
+
+            try:
+                target_path.rmdir()
+            except OSError:
+                continue
+            deleted_dirs.append(target_path)
+        else:
+            delete_file(target_path)
+
+    return {
+        "deleted_files": len(deleted_files),
+        "deleted_dirs": len(deleted_dirs),
+    }
 
 
 def path_to_url(path: Path) -> str:
@@ -727,6 +821,34 @@ def build_index_html(
       align-items: stretch;
       margin-bottom: 24px;
     }}
+    .examples-panel {{
+      padding: 12px;
+      margin-bottom: 24px;
+    }}
+    .examples-grid {{
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }}
+    .command-example {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }}
+    .command-example code {{
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 10px;
+      background: transparent;
+      color: var(--text);
+      font: 13px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      white-space: nowrap;
+    }}
     .panel {{
       background: var(--panel);
       border: 1px solid var(--line);
@@ -945,6 +1067,7 @@ def build_index_html(
     @media (max-width: 720px) {{
       main {{ width: min(100% - 20px, 1040px); margin-top: 18px; }}
       .workbench {{ grid-template-columns: minmax(0, 1fr); }}
+      .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
       .setting-check {{ justify-content: flex-start; }}
       header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
@@ -1030,11 +1153,31 @@ def build_index_html(
       </section>
     </div>
 
+    <section class="panel examples-panel">
+      <h2>Commands</h2>
+      <div class="examples-grid">
+        <div class="command-example">
+          <code id="example-curl-upload"></code>
+          <button class="button secondary small copy-command" type="button" data-copy-target="example-curl-upload">Copy</button>
+        </div>
+        <div class="command-example">
+          <code id="example-powershell-upload"></code>
+          <button class="button secondary small copy-command" type="button" data-copy-target="example-powershell-upload">Copy</button>
+        </div>
+        <div class="command-example">
+          <code id="example-download-zip"></code>
+          <button class="button secondary small copy-command" type="button" data-copy-target="example-download-zip">Copy</button>
+        </div>
+      </div>
+    </section>
+
     <section>
       <div class="file-head">
         <h2>Files</h2>
         <div class="file-actions">
           <button id="download-selected" class="button" type="button" disabled>Download Selected</button>
+          <button id="delete-selected" class="button secondary" type="button" disabled>Delete Selected</button>
+          <button id="refresh-files" class="button secondary" type="button">Refresh</button>
           <a class="button secondary" href="/download.zip">Download ZIP</a>
         </div>
       </div>
@@ -1051,6 +1194,12 @@ def build_index_html(
     let maxUploadSize = Number(document.body.dataset.maxUploadSize || "0");
     const cliEnabled = document.body.dataset.cliEnabled === "true";
     const selectedDownload = document.getElementById("download-selected");
+    const deleteSelected = document.getElementById("delete-selected");
+    const refreshFiles = document.getElementById("refresh-files");
+    const exampleCurlUpload = document.getElementById("example-curl-upload");
+    const examplePowerShellUpload = document.getElementById("example-powershell-upload");
+    const exampleDownloadZip = document.getElementById("example-download-zip");
+    const copyCommandButtons = Array.from(document.querySelectorAll(".copy-command"));
     const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
     const settingsForm = document.getElementById("settings-form");
     const settingsMaxSize = document.getElementById("settings-max-size");
@@ -1072,9 +1221,16 @@ def build_index_html(
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
     selectedDownload.addEventListener("click", downloadSelected);
+    deleteSelected.addEventListener("click", deleteSelectedFiles);
+    refreshFiles.addEventListener("click", () => window.location.reload());
     settingsForm.addEventListener("submit", saveSettings);
     commandForm.addEventListener("submit", runCommand);
     adminToken.value = window.localStorage.getItem("uploadServerAdminToken") || "";
+    fillCommandExamples();
+
+    for (const button of copyCommandButtons) {{
+      button.addEventListener("click", copyCommand);
+    }}
 
     for (const check of treeChecks) {{
       check.addEventListener("click", event => event.stopPropagation());
@@ -1161,7 +1317,9 @@ def build_index_html(
     }}
 
     function updateSelectedDownload() {{
-      selectedDownload.disabled = selectedPaths().length === 0;
+      const nothingSelected = selectedPaths().length === 0;
+      selectedDownload.disabled = nothingSelected;
+      deleteSelected.disabled = nothingSelected;
     }}
 
     function downloadSelected() {{
@@ -1174,6 +1332,63 @@ def build_index_html(
       }}
 
       window.location.href = "/download.zip?" + query.toString();
+    }}
+
+    async function deleteSelectedFiles() {{
+      const paths = selectedPaths();
+      if (!paths.length) return;
+
+      if (!adminTokenValue()) {{
+        window.alert("Admin token required.");
+        return;
+      }}
+
+      const label = paths.length === 1 ? paths[0] : `${{paths.length}} selected items`;
+      if (!window.confirm(`Delete ${{label}}?`)) return;
+
+      deleteSelected.disabled = true;
+      try {{
+        const response = await fetch("/delete", {{
+          method: "POST",
+          headers: adminJsonHeaders(),
+          body: JSON.stringify({{ paths: paths }})
+        }});
+        const result = await response.json();
+
+        if (!response.ok) {{
+          window.alert(result.error || "Delete failed");
+          return;
+        }}
+
+        window.location.reload();
+      }} catch (error) {{
+        window.alert(error.message);
+      }} finally {{
+        updateSelectedDownload();
+      }}
+    }}
+
+    function fillCommandExamples() {{
+      const origin = window.location.origin;
+      exampleCurlUpload.textContent = `curl -T myfile.txt ${{origin}}/myfile.txt`;
+      examplePowerShellUpload.textContent = String.raw`Invoke-WebRequest -Uri "${{origin}}/myfile.txt" -Method PUT -InFile "C:\\Path\\To\\myfile.txt"`;
+      exampleDownloadZip.textContent = `curl -L ${{origin}}/download.zip -o shared-files.zip`;
+    }}
+
+    async function copyCommand(event) {{
+      const button = event.currentTarget;
+      const targetId = button.dataset.copyTarget;
+      const target = document.getElementById(targetId);
+      const text = target ? target.textContent : "";
+      if (!text) return;
+
+      try {{
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied";
+        setTimeout(() => button.textContent = "Copy", 900);
+      }} catch (error) {{
+        window.prompt("Copy command", text);
+      }}
     }}
 
     function appendTerminal(text) {{
@@ -1492,6 +1707,10 @@ class UploadHandler(SimpleHTTPRequestHandler):
             self.update_settings()
             return
 
+        if path == "/delete":
+            self.delete_selected()
+            return
+
         self.send_error(404, "Not found")
 
     def run_command(self) -> None:
@@ -1579,6 +1798,58 @@ class UploadHandler(SimpleHTTPRequestHandler):
             f"CLI {settings_payload['command_timeout_label']}, "
             f"stop {settings_payload['stop_after_label']}, "
             f"{settings_payload['overwrite_label']})"
+        )
+
+    def delete_selected(self) -> None:
+        if not self.require_admin():
+            return
+
+        content_length = self.headers.get("Content-Length")
+        if content_length is None:
+            self.send_json({"error": "Content-Length header is required"}, status=411)
+            return
+
+        try:
+            body_size = int(content_length)
+        except ValueError:
+            self.send_json({"error": "Invalid Content-Length header"}, status=400)
+            return
+
+        if body_size < 0 or body_size > MAX_COMMAND_BODY_SIZE:
+            self.send_json({"error": "Delete request is too large"}, status=413)
+            return
+
+        try:
+            payload = json.loads(self.rfile.read(body_size).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, status=400)
+            return
+
+        paths = payload.get("paths") if isinstance(payload, dict) else None
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            self.send_json({"error": "Missing selected paths"}, status=400)
+            return
+
+        settings = self.runtime_settings.snapshot()
+        try:
+            result = delete_selected_paths(self.upload_dir, paths, settings["show_hidden"])
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, status=400)
+            return
+        except PermissionError as exc:
+            self.send_json({"error": str(exc)}, status=403)
+            return
+        except FileNotFoundError as exc:
+            self.send_json({"error": f"Selected path not found: {exc}"}, status=404)
+            return
+        except OSError as exc:
+            self.send_json({"error": f"Delete failed: {exc}"}, status=500)
+            return
+
+        self.send_json(result)
+        self.log_event(
+            f"Deleted selected paths "
+            f"({result['deleted_files']} files, {result['deleted_dirs']} folders)"
         )
 
     def send_json(self, payload: dict, status: int = 200) -> None:
