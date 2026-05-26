@@ -1157,16 +1157,16 @@ def build_index_html(
       <h2>Commands</h2>
       <div class="examples-grid">
         <div class="command-example">
-          <code id="example-curl-upload"></code>
-          <button class="button secondary small copy-command" type="button" data-copy-target="example-curl-upload">Copy</button>
+          <code id="command-list-selected"></code>
+          <button class="button secondary small run-command-preset" type="button" data-command-target="command-list-selected"{command_disabled}>Run</button>
         </div>
         <div class="command-example">
-          <code id="example-powershell-upload"></code>
-          <button class="button secondary small copy-command" type="button" data-copy-target="example-powershell-upload">Copy</button>
+          <code id="command-size-selected"></code>
+          <button class="button secondary small run-command-preset" type="button" data-command-target="command-size-selected"{command_disabled}>Run</button>
         </div>
         <div class="command-example">
-          <code id="example-download-zip"></code>
-          <button class="button secondary small copy-command" type="button" data-copy-target="example-download-zip">Copy</button>
+          <code id="command-stat-selected"></code>
+          <button class="button secondary small run-command-preset" type="button" data-command-target="command-stat-selected"{command_disabled}>Run</button>
         </div>
       </div>
     </section>
@@ -1196,10 +1196,10 @@ def build_index_html(
     const selectedDownload = document.getElementById("download-selected");
     const deleteSelected = document.getElementById("delete-selected");
     const refreshFiles = document.getElementById("refresh-files");
-    const exampleCurlUpload = document.getElementById("example-curl-upload");
-    const examplePowerShellUpload = document.getElementById("example-powershell-upload");
-    const exampleDownloadZip = document.getElementById("example-download-zip");
-    const copyCommandButtons = Array.from(document.querySelectorAll(".copy-command"));
+    const commandListSelected = document.getElementById("command-list-selected");
+    const commandSizeSelected = document.getElementById("command-size-selected");
+    const commandStatSelected = document.getElementById("command-stat-selected");
+    const runPresetButtons = Array.from(document.querySelectorAll(".run-command-preset"));
     const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
     const settingsForm = document.getElementById("settings-form");
     const settingsMaxSize = document.getElementById("settings-max-size");
@@ -1226,10 +1226,10 @@ def build_index_html(
     settingsForm.addEventListener("submit", saveSettings);
     commandForm.addEventListener("submit", runCommand);
     adminToken.value = window.localStorage.getItem("uploadServerAdminToken") || "";
-    fillCommandExamples();
+    updateCommandPresets();
 
-    for (const button of copyCommandButtons) {{
-      button.addEventListener("click", copyCommand);
+    for (const button of runPresetButtons) {{
+      button.addEventListener("click", runCommandPreset);
     }}
 
     for (const check of treeChecks) {{
@@ -1241,6 +1241,7 @@ def build_index_html(
 
         updateAncestorChecks(check);
         updateSelectedDownload();
+        updateCommandPresets();
       }});
     }}
 
@@ -1368,26 +1369,33 @@ def build_index_html(
       }}
     }}
 
-    function fillCommandExamples() {{
-      const origin = window.location.origin;
-      exampleCurlUpload.textContent = `curl -T myfile.txt ${{origin}}/myfile.txt`;
-      examplePowerShellUpload.textContent = `Invoke-WebRequest -Uri "${{origin}}/myfile.txt" -Method PUT -InFile "C:\\\\Path\\\\To\\\\myfile.txt"`;
-      exampleDownloadZip.textContent = `curl -L ${{origin}}/download.zip -o shared-files.zip`;
+    function shellQuote(path) {{
+      return "'" + path.split("'").join("'\\\"'\\\"'") + "'";
     }}
 
-    async function copyCommand(event) {{
-      const button = event.currentTarget;
-      const targetId = button.dataset.copyTarget;
-      const target = document.getElementById(targetId);
-      const text = target ? target.textContent : "";
-      if (!text) return;
+    function selectedCommandArgs() {{
+      const paths = selectedPaths();
+      if (!paths.length) return ".";
+      return paths.map(shellQuote).join(" ");
+    }}
 
-      try {{
-        await navigator.clipboard.writeText(text);
-        button.textContent = "Copied";
-        setTimeout(() => button.textContent = "Copy", 900);
-      }} catch (error) {{
-        window.prompt("Copy command", text);
+    function updateCommandPresets() {{
+      const args = selectedCommandArgs();
+      commandListSelected.textContent = `ls -lah -- ${{args}}`;
+      commandSizeSelected.textContent = `du -sh -- ${{args}}`;
+      commandStatSelected.textContent = `stat -- ${{args}}`;
+    }}
+
+    async function runCommandPreset(event) {{
+      const targetId = event.currentTarget.dataset.commandTarget;
+      const target = document.getElementById(targetId);
+      await executeCommand(target ? target.textContent.trim() : "");
+    }}
+
+    function setCommandRunning(isRunning) {{
+      commandButton.disabled = isRunning;
+      for (const button of runPresetButtons) {{
+        button.disabled = isRunning || !cliEnabled;
       }}
     }}
 
@@ -1470,8 +1478,12 @@ def build_index_html(
 
     async function runCommand(event) {{
       event.preventDefault();
-
       const command = commandInput.value.trim();
+      commandInput.value = "";
+      await executeCommand(command);
+    }}
+
+    async function executeCommand(command) {{
       if (!command) return;
 
       if (!cliEnabled) {{
@@ -1479,14 +1491,13 @@ def build_index_html(
         return;
       }}
 
-      commandInput.value = "";
       if (command === "clear") {{
         terminalOutput.textContent = "";
         commandInput.focus();
         return;
       }}
 
-      commandButton.disabled = true;
+      setCommandRunning(true);
       appendTerminal(`\\n$ ${{command}}\\n`);
 
       try {{
@@ -1511,7 +1522,7 @@ def build_index_html(
       }} catch (error) {{
         appendTerminal(`${{error.message}}\\n`);
       }} finally {{
-        commandButton.disabled = false;
+        setCommandRunning(false);
         commandInput.focus();
       }}
     }}

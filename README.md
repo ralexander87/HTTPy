@@ -38,7 +38,7 @@ Open the printed URL in a browser. The page includes:
 - selected file/folder ZIP downloads
 - selected file/folder delete, protected by the admin token
 - a refresh button for the file list
-- copyable `curl` and PowerShell command examples based on the current URL
+- selected file/folder command presets for list, size, and stat
 - an optional lightweight CLI panel that runs commands in the shared directory
 - live settings for upload size, overwrite mode, command timeout, and auto-stop
 

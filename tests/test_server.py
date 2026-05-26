@@ -526,10 +526,12 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="download-selected"' in page
     assert 'id="delete-selected"' in page
     assert 'id="refresh-files"' in page
-    assert 'id="example-curl-upload"' in page
-    assert 'id="example-powershell-upload"' in page
-    assert 'id="example-download-zip"' in page
-    assert 'class="button secondary small copy-command"' in page
+    assert 'id="command-list-selected"' in page
+    assert 'id="command-size-selected"' in page
+    assert 'id="command-stat-selected"' in page
+    assert 'class="button secondary small run-command-preset"' in page
+    assert 'data-command-target="command-list-selected"' in page
+    assert 'copy-command' not in page
     assert 'id="settings-form"' in page
     assert 'id="settings-max-size"' in page
     assert 'id="settings-command-timeout"' in page
@@ -544,8 +546,13 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'appendTerminal("\\nCLI is disabled. Restart with --enable-cli.\\n");' in page
     assert 'appendTerminal(`\\n$ ${command}\\n`);' in page
     assert 'appendTerminal("exit 0\\n");' in page
+    assert 'function shellQuote(path)' in page
+    assert 'path.split("\'").join("\'\\"\'\\"\'")' in page
+    assert 'commandListSelected.textContent = `ls -lah -- ${args}`;' in page
+    assert 'commandSizeSelected.textContent = `du -sh -- ${args}`;' in page
+    assert 'commandStatSelected.textContent = `stat -- ${args}`;' in page
+    assert 'async function executeCommand(command)' in page
     assert 'appendTerminal("\nCLI is disabled' not in page
     assert 'String.raw`Invoke-WebRequest' not in page
-    assert 'C:\\\\Path\\\\To\\\\myfile.txt' in page
     assert 'command === "clear"' in page
     assert "?." not in page
