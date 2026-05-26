@@ -783,6 +783,19 @@ def build_index_html(
       background: var(--panel);
       white-space: nowrap;
     }}
+    .notice {{
+      margin: -4px 0 16px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--warn);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: color-mix(in srgb, var(--warn) 8%, var(--panel));
+      color: var(--text);
+      font-size: 13px;
+    }}
+    .notice strong {{
+      color: var(--warn);
+    }}
     .settings-panel {{
       padding: 12px;
       margin-bottom: 16px;
@@ -1128,6 +1141,13 @@ def build_index_html(
         <span class="pill">Hidden {hidden_text}</span>
       </div>
     </header>
+
+    <section class="notice" role="note">
+      <strong>Personal local use only.</strong>
+      Security is minimal: anyone who can reach this server can upload or download files,
+      and the browser CLI can run commands when enabled. Use only on trusted networks and
+      stop the server when finished.
+    </section>
 
     <section class="panel settings-panel">
       <form id="settings-form" class="settings-form" onsubmit="return false">
