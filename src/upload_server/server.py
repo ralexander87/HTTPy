@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+
+# Tunables and safety defaults used by both the package module and standalone copy.
 CHUNK_SIZE = 1024 * 1024
 MAX_COMMAND_BODY_SIZE = 64 * 1024
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -44,6 +46,7 @@ DURATION_UNITS = {
 }
 
 
+# Size and duration helpers keep CLI options, live settings, and UI labels consistent.
 def parse_size(value: str | None) -> int | None:
     if value is None:
         return None
@@ -119,6 +122,7 @@ def command_output_to_text(output: str | bytes | None) -> str:
 
 
 def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
+    """Run one browser CLI command and return JSON-safe output."""
     command = command.strip()
     if not command:
         raise ValueError("missing command")
@@ -129,6 +133,8 @@ def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
     started_at = time.monotonic()
 
     try:
+        # The shell is intentional here: the browser CLI is an opt-in convenience
+        # for short trusted-network sessions, not a hardened remote shell.
         completed = subprocess.run(
             command,
             shell=True,
@@ -177,6 +183,8 @@ def generate_admin_token() -> str:
 
 
 class RuntimeSettings:
+    """Thread-safe settings shared by all request-handler instances."""
+
     def __init__(
         self,
         max_upload_size: int | None,
@@ -253,6 +261,8 @@ class RuntimeSettings:
             print(f"\nAuto-stop reached after {format_duration(seconds)}. Stopping server.")
             server.shutdown()
 
+        # server.shutdown() is safe to call from another thread and keeps the
+        # main server loop from needing to poll for the auto-stop deadline.
         timer = threading.Timer(seconds, stop_server)
         timer.daemon = True
         timer.start()
@@ -309,6 +319,8 @@ def parse_settings_payload(payload: object) -> dict:
     return updates
 
 
+# Path handling is centralized here so uploads, downloads, ZIPs, and deletes all
+# follow the same traversal, hidden-file, and symlink escape rules.
 def relative_path_from_root(root_dir: Path, path: Path) -> Path:
     try:
         return path.resolve().relative_to(root_dir.resolve())
@@ -346,6 +358,7 @@ def is_shared_path_allowed(root_dir: Path, path: Path, show_hidden: bool) -> boo
 
 
 def resolve_request_path(root_dir: Path, request_path: str, show_hidden: bool = False) -> Path:
+    """Resolve a URL path to a real filesystem path inside the shared root."""
     root = root_dir.resolve()
     parsed_path = unquote(urlsplit(request_path).path)
     relative_path = Path(parsed_path.lstrip("/"))
@@ -388,6 +401,8 @@ def open_upload_target(target_path: Path, overwrite: bool) -> tuple[Path, Binary
     if overwrite:
         return target_path, target_path.open("wb")
 
+    # Use exclusive creation so simultaneous duplicate uploads cannot choose the
+    # same name between the existence check and the file open.
     for candidate_path in candidate_upload_paths(target_path):
         try:
             return candidate_path, candidate_path.open("xb")
@@ -424,6 +439,7 @@ def resolve_selected_original_path(
     selected_path: str,
     show_hidden: bool = False,
 ) -> Path:
+    """Resolve selected paths for delete while preserving the selected symlink."""
     root = root_dir.resolve()
     relative_path = Path(selected_path.strip("/"))
 
@@ -497,6 +513,8 @@ def delete_selected_paths(
     seen_paths = set()
 
     def delete_file(path: Path) -> None:
+        # Symlinks should delete the link itself, while regular files are
+        # deduplicated by their resolved target.
         path_key = path.absolute() if path.is_symlink() else path.resolve()
         if path_key in seen_paths:
             return
@@ -512,6 +530,8 @@ def delete_selected_paths(
             raise FileNotFoundError(selected_path)
 
         if target_path.is_dir() and not target_path.is_symlink():
+            # Delete files first, then remove empty directories from the leaves
+            # upward. Hidden or escaping children are skipped unless enabled.
             for child_path in sorted(target_path.rglob("*"), reverse=True):
                 if child_path.is_dir() and not child_path.is_symlink():
                     continue
@@ -554,6 +574,7 @@ def path_to_url(path: Path) -> str:
     return "/" + quote(path.as_posix(), safe="/")
 
 
+# Network and rendering helpers for the startup output and single-page browser UI.
 def get_local_ipv4_addresses() -> list[str]:
     addresses: set[str] = set()
 
@@ -669,6 +690,7 @@ def build_index_html(
     cli_enabled: bool = False,
     show_hidden: bool = False,
 ) -> bytes:
+    """Build the complete browser UI as one self-contained HTML document."""
     root = upload_dir.resolve()
     files = iter_shared_files(root, show_hidden)
     total_size = sum(path.stat().st_size for path in files)
@@ -1591,6 +1613,8 @@ def build_index_html(
 
 
 class UploadHandler(SimpleHTTPRequestHandler):
+    """HTTP endpoints for browsing, uploading, zipping, deleting, and CLI."""
+
     server_version = "UploadHTTP/0.2"
     upload_dir: Path
     runtime_settings: RuntimeSettings
@@ -1625,6 +1649,8 @@ class UploadHandler(SimpleHTTPRequestHandler):
             self.send_zip_archive(selected_paths)
             return
 
+        # Let SimpleHTTPRequestHandler stream regular files after the same path
+        # validation used by ZIP and delete operations.
         try:
             requested_path = resolve_request_path(
                 self.upload_dir,
@@ -1699,6 +1725,8 @@ class UploadHandler(SimpleHTTPRequestHandler):
 
         with upload_file:
             while remaining:
+                # Stream large uploads in bounded chunks instead of loading the
+                # whole request body into memory.
                 chunk = self.rfile.read(min(remaining, CHUNK_SIZE))
                 if not chunk:
                     target_path.unlink(missing_ok=True)
@@ -1913,6 +1941,8 @@ class UploadHandler(SimpleHTTPRequestHandler):
         total_size = 0
         archive_name = "selected-files.zip" if selected_paths else "shared-files.zip"
 
+        # Build the archive in a temporary file so Content-Length is known before
+        # streaming it back to the browser.
         with tempfile.TemporaryFile() as archive:
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 for path in files:
@@ -1953,6 +1983,7 @@ def make_handler(
     admin_token: str | None = None,
     runtime_settings: RuntimeSettings | None = None,
 ) -> type[UploadHandler]:
+    """Bind one configured upload directory/settings object to the handler class."""
     upload_dir = upload_dir.resolve()
     if runtime_settings is None:
         runtime_settings = RuntimeSettings(
@@ -1974,6 +2005,7 @@ def make_handler(
     return ConfiguredUploadHandler
 
 
+# Command-line entry point and startup messages.
 def print_useful_options() -> None:
     print("Useful options:")
     print("  --upload-dir PATH   Share/save files in another directory")
