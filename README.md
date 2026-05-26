@@ -37,6 +37,7 @@ Open the printed URL in a browser. The page includes:
 - `Download ZIP` for the whole shared directory
 - selected file/folder ZIP downloads
 - a lightweight CLI panel that runs commands in the shared directory
+- live settings for upload size, overwrite mode, command timeout, and auto-stop
 
 Existing files are not overwritten by default. If `photo.jpg` already exists, the
 next upload is saved as `photo-1.jpg`.

@@ -154,6 +154,143 @@ def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
     }
 
 
+def setting_size_value(size: int | None) -> str:
+    if size is None:
+        return ""
+
+    return format_size(size).replace(" ", "")
+
+
+def setting_duration_value(seconds: int | None) -> str:
+    if seconds is None:
+        return ""
+
+    return format_duration(seconds)
+
+
+class RuntimeSettings:
+    def __init__(
+        self,
+        max_upload_size: int | None,
+        overwrite_uploads: bool,
+        command_timeout: int | None,
+        stop_after: int | None,
+    ) -> None:
+        self.max_upload_size = max_upload_size
+        self.overwrite_uploads = overwrite_uploads
+        self.command_timeout = command_timeout
+        self.stop_after = stop_after
+        self.auto_stop_deadline: float | None = None
+        self.auto_stop_timer: threading.Timer | None = None
+        self.lock = threading.Lock()
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            remaining = None
+            if self.auto_stop_deadline is not None:
+                remaining = max(0, int(self.auto_stop_deadline - time.time()))
+
+            return {
+                "max_upload_size": self.max_upload_size,
+                "overwrite_uploads": self.overwrite_uploads,
+                "command_timeout": self.command_timeout,
+                "stop_after": self.stop_after,
+                "auto_stop_remaining": remaining,
+            }
+
+    def apply_updates(self, server: ThreadingHTTPServer, updates: dict) -> None:
+        with self.lock:
+            if "max_upload_size" in updates:
+                self.max_upload_size = updates["max_upload_size"]
+            if "overwrite_uploads" in updates:
+                self.overwrite_uploads = updates["overwrite_uploads"]
+            if "command_timeout" in updates:
+                self.command_timeout = updates["command_timeout"]
+            if "stop_after" in updates:
+                self.stop_after = updates["stop_after"]
+                self._schedule_auto_stop_locked(server)
+
+    def start_auto_stop(self, server: ThreadingHTTPServer) -> None:
+        with self.lock:
+            self._schedule_auto_stop_locked(server)
+
+    def cancel_auto_stop(self) -> None:
+        with self.lock:
+            self._cancel_auto_stop_locked()
+
+    def _cancel_auto_stop_locked(self) -> None:
+        if self.auto_stop_timer is not None:
+            self.auto_stop_timer.cancel()
+        self.auto_stop_timer = None
+        self.auto_stop_deadline = None
+
+    def _schedule_auto_stop_locked(self, server: ThreadingHTTPServer) -> None:
+        self._cancel_auto_stop_locked()
+
+        if self.stop_after is None:
+            return
+
+        seconds = self.stop_after
+        self.auto_stop_deadline = time.time() + seconds
+
+        def stop_server() -> None:
+            print(f"\nAuto-stop reached after {format_duration(seconds)}. Stopping server.")
+            server.shutdown()
+
+        timer = threading.Timer(seconds, stop_server)
+        timer.daemon = True
+        timer.start()
+        self.auto_stop_timer = timer
+
+
+def settings_to_json(settings: RuntimeSettings) -> dict:
+    snapshot = settings.snapshot()
+    max_upload_size = snapshot["max_upload_size"]
+    overwrite_uploads = snapshot["overwrite_uploads"]
+    command_timeout = snapshot["command_timeout"]
+    stop_after = snapshot["stop_after"]
+    auto_stop_remaining = snapshot["auto_stop_remaining"]
+
+    return {
+        "max_upload_size": max_upload_size,
+        "max_size": setting_size_value(max_upload_size),
+        "max_size_label": format_size(max_upload_size),
+        "overwrite": overwrite_uploads,
+        "overwrite_label": "overwrite" if overwrite_uploads else "rename",
+        "command_timeout_seconds": command_timeout,
+        "command_timeout": setting_duration_value(command_timeout),
+        "command_timeout_label": format_duration(command_timeout),
+        "stop_after_seconds": stop_after,
+        "stop_after": setting_duration_value(stop_after),
+        "stop_after_label": format_duration(stop_after),
+        "auto_stop_remaining": auto_stop_remaining,
+        "auto_stop_remaining_label": format_duration(auto_stop_remaining),
+    }
+
+
+def parse_settings_payload(payload: object) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid settings request")
+
+    updates = {}
+
+    if "max_size" in payload:
+        updates["max_upload_size"] = parse_size(str(payload["max_size"]))
+
+    if "overwrite" in payload:
+        if not isinstance(payload["overwrite"], bool):
+            raise ValueError("overwrite must be true or false")
+        updates["overwrite_uploads"] = payload["overwrite"]
+
+    if "command_timeout" in payload:
+        updates["command_timeout"] = parse_duration(str(payload["command_timeout"]))
+
+    if "stop_after" in payload:
+        updates["stop_after"] = parse_duration(str(payload["stop_after"]))
+
+    return updates
+
+
 def resolve_request_path(root_dir: Path, request_path: str) -> Path:
     root = root_dir.resolve()
     parsed_path = unquote(urlsplit(request_path).path)
@@ -378,6 +515,8 @@ def build_index_html(
     upload_dir: Path,
     max_upload_size: int | None,
     overwrite_uploads: bool,
+    command_timeout: int | None = 30,
+    stop_after: int | None = None,
 ) -> bytes:
     root = upload_dir.resolve()
     files = iter_shared_files(root)
@@ -385,6 +524,12 @@ def build_index_html(
     file_tree = render_file_tree(root, files)
     max_size_text = format_size(max_upload_size)
     overwrite_text = "overwrite" if overwrite_uploads else "rename"
+    command_timeout_text = format_duration(command_timeout)
+    stop_after_text = format_duration(stop_after)
+    max_size_value = html.escape(setting_size_value(max_upload_size), quote=True)
+    command_timeout_value = html.escape(setting_duration_value(command_timeout), quote=True)
+    stop_after_value = html.escape(setting_duration_value(stop_after), quote=True)
+    overwrite_checked = " checked" if overwrite_uploads else ""
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -455,6 +600,58 @@ def build_index_html(
       padding: 5px 10px;
       background: var(--panel);
       white-space: nowrap;
+    }}
+    .settings-panel {{
+      padding: 12px;
+      margin-bottom: 16px;
+    }}
+    .settings-form {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(120px, 1fr)) auto auto;
+      gap: 10px;
+      align-items: end;
+    }}
+    .setting-field {{
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .setting-field input[type="text"] {{
+      min-width: 0;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 10px;
+      background: transparent;
+      color: var(--text);
+      font: 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-weight: 400;
+    }}
+    .setting-check {{
+      min-height: 36px;
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 650;
+      white-space: nowrap;
+    }}
+    .setting-check input {{
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }}
+    .settings-status {{
+      min-height: 20px;
+      color: var(--muted);
+      font-size: 13px;
+      grid-column: 1 / -1;
+    }}
+    .settings-status.error {{
+      color: var(--warn);
     }}
     .workbench {{
       display: grid;
@@ -681,6 +878,8 @@ def build_index_html(
     @media (max-width: 720px) {{
       main {{ width: min(100% - 20px, 1040px); margin-top: 18px; }}
       .workbench {{ grid-template-columns: minmax(0, 1fr); }}
+      .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
+      .setting-check {{ justify-content: flex-start; }}
       header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
       .file-actions {{ justify-content: flex-start; }}
       .stats {{ justify-content: flex-start; }}
@@ -703,10 +902,35 @@ def build_index_html(
       <div class="stats">
         <span class="pill">{len(files)} files</span>
         <span class="pill">{format_size(total_size)}</span>
-        <span class="pill">Limit {max_size_text}</span>
-        <span class="pill">{overwrite_text}</span>
+        <span id="stat-upload-limit" class="pill">Limit {max_size_text}</span>
+        <span id="stat-overwrite" class="pill">{overwrite_text}</span>
+        <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
+        <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
       </div>
     </header>
+
+    <section class="panel settings-panel">
+      <form id="settings-form" class="settings-form" onsubmit="return false">
+        <label class="setting-field">
+          Max size
+          <input id="settings-max-size" type="text" value="{max_size_value}" placeholder="unlimited">
+        </label>
+        <label class="setting-field">
+          Command timeout
+          <input id="settings-command-timeout" type="text" value="{command_timeout_value}" placeholder="off">
+        </label>
+        <label class="setting-field">
+          Stop after
+          <input id="settings-stop-after" type="text" value="{stop_after_value}" placeholder="off">
+        </label>
+        <label class="setting-check">
+          <input id="settings-overwrite" type="checkbox"{overwrite_checked}>
+          Overwrite
+        </label>
+        <button id="settings-save" class="button" type="submit">Save</button>
+        <div id="settings-status" class="settings-status"></div>
+      </form>
+    </section>
 
     <div class="workbench">
       <section id="drop-zone" class="panel upload">
@@ -752,9 +976,20 @@ def build_index_html(
     const choose = document.getElementById("choose-files");
     const progress = document.getElementById("progress");
     const status = document.getElementById("status");
-    const maxUploadSize = Number(document.body.dataset.maxUploadSize || "0");
+    let maxUploadSize = Number(document.body.dataset.maxUploadSize || "0");
     const selectedDownload = document.getElementById("download-selected");
     const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
+    const settingsForm = document.getElementById("settings-form");
+    const settingsMaxSize = document.getElementById("settings-max-size");
+    const settingsCommandTimeout = document.getElementById("settings-command-timeout");
+    const settingsStopAfter = document.getElementById("settings-stop-after");
+    const settingsOverwrite = document.getElementById("settings-overwrite");
+    const settingsSave = document.getElementById("settings-save");
+    const settingsStatus = document.getElementById("settings-status");
+    const statUploadLimit = document.getElementById("stat-upload-limit");
+    const statOverwrite = document.getElementById("stat-overwrite");
+    const statCommandTimeout = document.getElementById("stat-command-timeout");
+    const statAutoStop = document.getElementById("stat-auto-stop");
     const commandForm = document.getElementById("command-form");
     const commandInput = document.getElementById("command-input");
     const terminalOutput = document.getElementById("terminal-output");
@@ -763,6 +998,7 @@ def build_index_html(
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
     selectedDownload.addEventListener("click", downloadSelected);
+    settingsForm.addEventListener("submit", saveSettings);
     commandForm.addEventListener("submit", runCommand);
 
     for (const check of treeChecks) {{
@@ -870,6 +1106,57 @@ def build_index_html(
       terminalOutput.scrollTop = terminalOutput.scrollHeight;
     }}
 
+    function applySettings(settings) {{
+      maxUploadSize = settings.max_upload_size || 0;
+      document.body.dataset.maxUploadSize = String(maxUploadSize);
+      settingsMaxSize.value = settings.max_size || "";
+      settingsCommandTimeout.value = settings.command_timeout || "";
+      settingsStopAfter.value = settings.stop_after || "";
+      settingsOverwrite.checked = Boolean(settings.overwrite);
+      statUploadLimit.textContent = `Limit ${{settings.max_size_label}}`;
+      statOverwrite.textContent = settings.overwrite_label;
+      statCommandTimeout.textContent = `CLI ${{settings.command_timeout_label}}`;
+      statAutoStop.textContent = `Stop ${{settings.stop_after_label}}`;
+    }}
+
+    async function saveSettings(event) {{
+      event.preventDefault();
+
+      settingsSave.disabled = true;
+      settingsStatus.className = "settings-status";
+      settingsStatus.textContent = "Saving";
+
+      try {{
+        const response = await fetch("/settings", {{
+          method: "POST",
+          headers: {{
+            "Content-Type": "application/json"
+          }},
+          body: JSON.stringify({{
+            max_size: settingsMaxSize.value.trim(),
+            command_timeout: settingsCommandTimeout.value.trim(),
+            stop_after: settingsStopAfter.value.trim(),
+            overwrite: settingsOverwrite.checked
+          }})
+        }});
+        const result = await response.json();
+
+        if (!response.ok) {{
+          settingsStatus.className = "settings-status error";
+          settingsStatus.textContent = result.error || "Settings failed";
+          return;
+        }}
+
+        applySettings(result);
+        settingsStatus.textContent = "Saved";
+      }} catch (error) {{
+        settingsStatus.className = "settings-status error";
+        settingsStatus.textContent = error.message;
+      }} finally {{
+        settingsSave.disabled = false;
+      }}
+    }}
+
     async function runCommand(event) {{
       event.preventDefault();
 
@@ -963,9 +1250,7 @@ def build_index_html(
 class UploadHandler(SimpleHTTPRequestHandler):
     server_version = "UploadHTTP/0.2"
     upload_dir: Path
-    max_upload_size: int | None = None
-    overwrite_uploads = False
-    command_timeout: int | None = 30
+    runtime_settings: RuntimeSettings
 
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
@@ -973,6 +1258,10 @@ class UploadHandler(SimpleHTTPRequestHandler):
 
         if path in {"/", "/index.html"}:
             self.send_index_page()
+            return
+
+        if path == "/settings":
+            self.send_json(settings_to_json(self.runtime_settings))
             return
 
         if path == "/download.zip":
@@ -994,6 +1283,8 @@ class UploadHandler(SimpleHTTPRequestHandler):
             )
 
     def do_PUT(self) -> None:
+        settings = self.runtime_settings.snapshot()
+
         try:
             requested_path = resolve_upload_path(self.upload_dir, self.path)
         except ValueError as exc:
@@ -1015,12 +1306,16 @@ class UploadHandler(SimpleHTTPRequestHandler):
             self.send_error(400, "Invalid Content-Length header")
             return
 
-        if self.max_upload_size is not None and remaining > self.max_upload_size:
-            self.send_error(413, f"Upload limit is {format_size(self.max_upload_size)}")
+        max_upload_size = settings["max_upload_size"]
+        if max_upload_size is not None and remaining > max_upload_size:
+            self.send_error(413, f"Upload limit is {format_size(max_upload_size)}")
             return
 
         try:
-            target_path, upload_file = open_upload_target(requested_path, self.overwrite_uploads)
+            target_path, upload_file = open_upload_target(
+                requested_path,
+                settings["overwrite_uploads"],
+            )
         except OSError as exc:
             self.send_error(500, f"Could not open upload target: {exc}")
             return
@@ -1049,11 +1344,15 @@ class UploadHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
 
-        if path != "/run-command":
-            self.send_error(404, "Not found")
+        if path == "/run-command":
+            self.run_command()
             return
 
-        self.run_command()
+        if path == "/settings":
+            self.update_settings()
+            return
+
+        self.send_error(404, "Not found")
 
     def run_command(self) -> None:
         content_length = self.headers.get("Content-Length")
@@ -1083,7 +1382,8 @@ class UploadHandler(SimpleHTTPRequestHandler):
             return
 
         try:
-            result = run_shell_command(command, self.upload_dir, self.command_timeout)
+            settings = self.runtime_settings.snapshot()
+            result = run_shell_command(command, self.upload_dir, settings["command_timeout"])
         except ValueError as exc:
             self.send_json({"error": str(exc)}, status=400)
             return
@@ -1092,6 +1392,43 @@ class UploadHandler(SimpleHTTPRequestHandler):
         self.log_event(
             f"Ran command {command!r} "
             f"(exit {result['returncode']}, {result['elapsed']:.3f}s)"
+        )
+
+    def update_settings(self) -> None:
+        content_length = self.headers.get("Content-Length")
+        if content_length is None:
+            self.send_json({"error": "Content-Length header is required"}, status=411)
+            return
+
+        try:
+            body_size = int(content_length)
+        except ValueError:
+            self.send_json({"error": "Invalid Content-Length header"}, status=400)
+            return
+
+        if body_size < 0 or body_size > MAX_COMMAND_BODY_SIZE:
+            self.send_json({"error": "Settings request is too large"}, status=413)
+            return
+
+        try:
+            payload = json.loads(self.rfile.read(body_size).decode("utf-8"))
+            updates = parse_settings_payload(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, status=400)
+            return
+        except (ValueError, argparse.ArgumentTypeError) as exc:
+            self.send_json({"error": str(exc)}, status=400)
+            return
+
+        self.runtime_settings.apply_updates(self.server, updates)
+        settings_payload = settings_to_json(self.runtime_settings)
+        self.send_json(settings_payload)
+        self.log_event(
+            "Updated settings "
+            f"(limit {settings_payload['max_size_label']}, "
+            f"CLI {settings_payload['command_timeout_label']}, "
+            f"stop {settings_payload['stop_after_label']}, "
+            f"{settings_payload['overwrite_label']})"
         )
 
     def send_json(self, payload: dict, status: int = 200) -> None:
@@ -1104,10 +1441,13 @@ class UploadHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def send_index_page(self) -> None:
+        settings = self.runtime_settings.snapshot()
         body = build_index_html(
             self.upload_dir,
-            self.max_upload_size,
-            self.overwrite_uploads,
+            settings["max_upload_size"],
+            settings["overwrite_uploads"],
+            settings["command_timeout"],
+            settings["stop_after"],
         )
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1161,35 +1501,28 @@ class UploadHandler(SimpleHTTPRequestHandler):
 
 def make_handler(
     upload_dir: Path,
-    max_upload_size: int | None,
-    overwrite_uploads: bool,
+    max_upload_size: int | None = None,
+    overwrite_uploads: bool = False,
     command_timeout: int | None = 30,
+    stop_after: int | None = None,
+    runtime_settings: RuntimeSettings | None = None,
 ) -> type[UploadHandler]:
     upload_dir = upload_dir.resolve()
+    if runtime_settings is None:
+        runtime_settings = RuntimeSettings(
+            max_upload_size,
+            overwrite_uploads,
+            command_timeout,
+            stop_after,
+        )
 
     class ConfiguredUploadHandler(UploadHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(upload_dir), **kwargs)
 
     ConfiguredUploadHandler.upload_dir = upload_dir
-    ConfiguredUploadHandler.max_upload_size = max_upload_size
-    ConfiguredUploadHandler.overwrite_uploads = overwrite_uploads
-    ConfiguredUploadHandler.command_timeout = command_timeout
+    ConfiguredUploadHandler.runtime_settings = runtime_settings
     return ConfiguredUploadHandler
-
-
-def schedule_auto_stop(server: ThreadingHTTPServer, seconds: int | None) -> threading.Timer | None:
-    if seconds is None:
-        return None
-
-    def stop_server() -> None:
-        print(f"\nAuto-stop reached after {format_duration(seconds)}. Stopping server.")
-        server.shutdown()
-
-    timer = threading.Timer(seconds, stop_server)
-    timer.daemon = True
-    timer.start()
-    return timer
 
 
 def print_useful_options() -> None:
@@ -1214,11 +1547,17 @@ def run_server(
     command_timeout: int | None,
 ) -> None:
     upload_dir.mkdir(parents=True, exist_ok=True)
-    handler_class = make_handler(upload_dir, max_upload_size, overwrite_uploads, command_timeout)
+    runtime_settings = RuntimeSettings(
+        max_upload_size,
+        overwrite_uploads,
+        command_timeout,
+        stop_after,
+    )
+    handler_class = make_handler(upload_dir, runtime_settings=runtime_settings)
 
     with ThreadingHTTPServer((host, port), handler_class) as server:
         actual_host, actual_port = server.server_address[:2]
-        timer = schedule_auto_stop(server, stop_after)
+        runtime_settings.start_auto_stop(server)
 
         print(f"Serving directory: {upload_dir.resolve()}")
         print(f"Upload limit: {format_size(max_upload_size)}")
@@ -1234,8 +1573,7 @@ def run_server(
         try:
             server.serve_forever()
         finally:
-            if timer is not None:
-                timer.cancel()
+            runtime_settings.cancel_auto_stop()
 
 
 def build_parser() -> argparse.ArgumentParser:

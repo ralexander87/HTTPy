@@ -214,6 +214,74 @@ def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
     assert payload["stdout"] == "endpoint"
 
 
+def test_settings_endpoint_updates_upload_limit_without_restart(tmp_path: Path) -> None:
+    settings = json.dumps(
+        {
+            "max_size": "3",
+            "command_timeout": "1s",
+            "stop_after": "0",
+            "overwrite": True,
+        }
+    )
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/settings",
+            body=settings,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(settings)),
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+        assert payload["max_upload_size"] == 3
+        assert payload["command_timeout_seconds"] == 1
+        assert payload["stop_after_seconds"] is None
+        assert payload["overwrite"] is True
+
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "PUT",
+            "/too-large.txt",
+            body=b"four",
+            headers={"Content-Length": "4"},
+        )
+        response = connection.getresponse()
+        assert response.status == 413
+        response.read()
+        connection.close()
+
+    assert not (tmp_path / "too-large.txt").exists()
+
+
+def test_settings_endpoint_rejects_invalid_size(tmp_path: Path) -> None:
+    settings = json.dumps({"max_size": "huge-ish"})
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/settings",
+            body=settings,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(settings)),
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 400
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+    assert "Use a size" in payload["error"]
+
+
 def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> None:
     (tmp_path / "root.txt").write_text("root", encoding="utf-8")
     (tmp_path / "docs").mkdir()
@@ -229,6 +297,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert '<a class="file-name" href="/docs/note.txt">note.txt</a>' in page
     assert '<a class="file-name" href="/root.txt">root.txt</a>' in page
     assert 'id="download-selected"' in page
+    assert 'id="settings-form"' in page
+    assert 'id="settings-max-size"' in page
+    assert 'id="settings-command-timeout"' in page
+    assert 'id="settings-stop-after"' in page
+    assert 'id="settings-overwrite"' in page
     assert 'id="command-form"' in page
     assert 'id="terminal-output"' in page
     assert 'onsubmit="return false"' in page
