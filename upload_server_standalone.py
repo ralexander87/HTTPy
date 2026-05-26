@@ -188,6 +188,78 @@ def server_urls(host: str, port: int) -> list[str]:
     return [f"http://{host}:{port}"]
 
 
+def new_tree_node() -> dict:
+    return {"dirs": {}, "files": []}
+
+
+def build_file_tree(root_dir: Path, files: list[Path]) -> dict:
+    root = root_dir.resolve()
+    tree = new_tree_node()
+
+    for path in files:
+        relative_path = path.relative_to(root)
+        current = tree
+
+        for part in relative_path.parts[:-1]:
+            current = current["dirs"].setdefault(part, new_tree_node())
+
+        current["files"].append(path)
+
+    return tree
+
+
+def tree_file_count(node: dict) -> int:
+    return len(node["files"]) + sum(tree_file_count(child) for child in node["dirs"].values())
+
+
+def render_file_row(root_dir: Path, path: Path) -> str:
+    relative_path = path.relative_to(root_dir.resolve())
+    stat = path.stat()
+    file_url = path_to_url(relative_path)
+    display_name = html.escape(relative_path.name)
+    modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
+
+    return (
+        "<div class=\"file-row\">"
+        f"<a class=\"file-name\" href=\"{file_url}\">{display_name}</a>"
+        f"<span class=\"file-meta\">{format_size(stat.st_size)}</span>"
+        f"<span class=\"file-meta\">{modified}</span>"
+        f"<a class=\"button small\" href=\"{file_url}\" download>Download</a>"
+        "</div>"
+    )
+
+
+def render_tree_node(root_dir: Path, node: dict) -> str:
+    parts = []
+
+    for dirname, child in sorted(node["dirs"].items(), key=lambda item: item[0].lower()):
+        folder_name = html.escape(dirname)
+        file_count = tree_file_count(child)
+        parts.append(
+            "<details class=\"folder\">"
+            "<summary>"
+            "<span class=\"arrow\">&gt;</span>"
+            f"<span class=\"folder-name\">{folder_name}</span>"
+            f"<span class=\"folder-count\">{file_count}</span>"
+            "</summary>"
+            f"<div class=\"children\">{render_tree_node(root_dir, child)}</div>"
+            "</details>"
+        )
+
+    for path in sorted(node["files"], key=lambda item: item.name.lower()):
+        parts.append(render_file_row(root_dir, path))
+
+    return "".join(parts)
+
+
+def render_file_tree(root_dir: Path, files: list[Path]) -> str:
+    if not files:
+        return "<div class=\"empty\">No files</div>"
+
+    tree = build_file_tree(root_dir, files)
+    return f"<div class=\"file-tree\">{render_tree_node(root_dir, tree)}</div>"
+
+
 def build_index_html(
     upload_dir: Path,
     max_upload_size: int | None,
@@ -196,26 +268,7 @@ def build_index_html(
     root = upload_dir.resolve()
     files = iter_shared_files(root)
     total_size = sum(path.stat().st_size for path in files)
-
-    rows = []
-    for path in files:
-        relative_path = path.relative_to(root)
-        stat = path.stat()
-        file_url = path_to_url(relative_path)
-        display_name = html.escape(relative_path.as_posix())
-        modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
-        rows.append(
-            "<tr>"
-            f"<td><a href=\"{file_url}\">{display_name}</a></td>"
-            f"<td>{format_size(stat.st_size)}</td>"
-            f"<td>{modified}</td>"
-            f"<td><a class=\"button small\" href=\"{file_url}\" download>Download</a></td>"
-            "</tr>"
-        )
-
-    if not rows:
-        rows.append("<tr><td colspan=\"4\" class=\"empty\">No files</td></tr>")
-
+    file_tree = render_file_tree(root, files)
     max_size_text = format_size(max_upload_size)
     overwrite_text = "overwrite" if overwrite_uploads else "rename"
 
@@ -336,39 +389,84 @@ def build_index_html(
       padding: 0 10px;
       font-size: 13px;
     }}
-    .table-head {{
+    .file-head {{
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 12px;
       margin-bottom: 8px;
     }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
+    .file-tree {{
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
     }}
-    th, td {{
-      padding: 11px 12px;
+    .folder {{
       border-bottom: 1px solid var(--line);
-      text-align: left;
-      vertical-align: middle;
     }}
-    th {{
+    .folder:last-child {{
+      border-bottom: 0;
+    }}
+    summary {{
+      min-height: 44px;
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }}
+    summary::-webkit-details-marker {{
+      display: none;
+    }}
+    .arrow {{
+      width: 18px;
+      height: 18px;
+      display: inline-grid;
+      place-items: center;
       color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
+      font-size: 13px;
+      transition: transform .14s ease;
+    }}
+    .folder[open] > summary .arrow {{
+      transform: rotate(90deg);
+    }}
+    .folder-name {{
+      overflow-wrap: anywhere;
       font-weight: 700;
     }}
-    tr:last-child td {{ border-bottom: 0; }}
-    td:first-child {{
-      overflow-wrap: anywhere;
-      font-weight: 600;
+    .folder-count {{
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
     }}
-    td:nth-child(2), td:nth-child(3), td:nth-child(4) {{
+    .children {{
+      margin-left: 24px;
+      border-left: 1px solid var(--line);
+    }}
+    .file-row {{
+      min-height: 44px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto auto;
+      align-items: center;
+      gap: 12px;
+      padding: 7px 12px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .file-tree > .file-row:last-child,
+    .children > .file-row:last-child {{
+      border-bottom: 0;
+    }}
+    .file-name {{
+      overflow-wrap: anywhere;
+      font-weight: 650;
+    }}
+    .file-meta {{
+      color: var(--muted);
+      font-size: 13px;
       white-space: nowrap;
     }}
     a {{ color: var(--accent); }}
@@ -385,18 +483,18 @@ def build_index_html(
     .empty {{
       color: var(--muted);
       text-align: center;
-      height: 72px;
+      padding: 28px 12px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
     }}
     @media (max-width: 720px) {{
       main {{ width: min(100% - 20px, 1040px); margin-top: 18px; }}
-      header.top, .table-head {{ align-items: stretch; flex-direction: column; }}
+      header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
       .stats {{ justify-content: flex-start; }}
-      table, thead, tbody, tr, th, td {{ display: block; }}
-      thead {{ display: none; }}
-      tr {{ border-bottom: 1px solid var(--line); padding: 10px 0; }}
-      tr:last-child {{ border-bottom: 0; }}
-      td {{ border: 0; padding: 6px 12px; }}
-      td:nth-child(2), td:nth-child(3), td:nth-child(4) {{ white-space: normal; }}
+      .file-row {{ grid-template-columns: minmax(0, 1fr); align-items: start; gap: 6px; }}
+      .file-meta {{ white-space: normal; }}
+      .children {{ margin-left: 14px; }}
     }}
   </style>
 </head>
@@ -426,23 +524,11 @@ def build_index_html(
     </section>
 
     <section>
-      <div class="table-head">
+      <div class="file-head">
         <h2>Files</h2>
         <a class="button secondary" href="/download.zip">Download ZIP</a>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Size</th>
-            <th>Modified</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {"".join(rows)}
-        </tbody>
-      </table>
+      {file_tree}
     </section>
   </main>
 

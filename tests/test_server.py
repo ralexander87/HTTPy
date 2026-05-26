@@ -9,6 +9,7 @@ from http.server import ThreadingHTTPServer
 import pytest
 
 from upload_server.server import (
+    build_index_html,
     make_handler,
     open_upload_target,
     parse_duration,
@@ -130,3 +131,17 @@ def test_download_zip_contains_shared_files(tmp_path: Path) -> None:
 
     with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
         assert sorted(archive.namelist()) == ["alpha.txt", "nested/beta.txt"]
+
+
+def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> None:
+    (tmp_path / "root.txt").write_text("root", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "note.txt").write_text("note", encoding="utf-8")
+
+    page = build_index_html(tmp_path, max_upload_size=None, overwrite_uploads=False).decode()
+
+    assert '<details class="folder">' in page
+    assert '<span class="arrow">&gt;</span>' in page
+    assert '<span class="folder-name">docs</span>' in page
+    assert '<a class="file-name" href="/docs/note.txt">note.txt</a>' in page
+    assert '<a class="file-name" href="/root.txt">root.txt</a>' in page
