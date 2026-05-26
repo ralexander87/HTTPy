@@ -11,6 +11,7 @@ import pytest
 
 from upload_server.server import (
     build_index_html,
+    command_output_to_text,
     files_for_zip,
     make_handler,
     open_upload_target,
@@ -166,6 +167,30 @@ def test_run_shell_command_uses_shared_directory(tmp_path: Path) -> None:
     assert (tmp_path / "made.txt").read_text(encoding="utf-8") == "hello"
 
 
+def test_command_output_to_text_decodes_bytes_and_strips_ansi() -> None:
+    assert command_output_to_text(b"\x1b[H\x1b[2Jdone\r\n") == "done\n"
+
+
+def test_run_shell_command_strips_ansi_sequences(tmp_path: Path) -> None:
+    result = run_shell_command("printf '\\033[H\\033[2Jdone'", tmp_path, timeout=5)
+
+    assert result["returncode"] == 0
+    assert result["stdout"] == "done"
+
+
+def test_run_shell_command_timeout_output_is_json_safe(tmp_path: Path) -> None:
+    result = run_shell_command(
+        "python3 -c 'import time; print(\"start\"); time.sleep(1)'",
+        tmp_path,
+        timeout=0.1,
+    )
+
+    json.dumps(result)
+    assert result["returncode"] == 124
+    assert isinstance(result["stdout"], str)
+    assert "Command timed out" in result["stderr"]
+
+
 def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
     command = json.dumps({"command": "printf endpoint"})
 
@@ -206,3 +231,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="download-selected"' in page
     assert 'id="command-form"' in page
     assert 'id="terminal-output"' in page
+    assert 'onsubmit="return false"' in page
+    assert 'appendTerminal("exit 0\\n");' in page
+    assert 'command === "clear"' in page
+    assert "?." not in page

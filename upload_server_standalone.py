@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 CHUNK_SIZE = 1024 * 1024
 MAX_COMMAND_BODY_SIZE = 64 * 1024
+ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 SIZE_UNITS = {
     "": 1,
     "B": 1,
@@ -100,6 +101,19 @@ def format_duration(seconds: int | None) -> str:
     return f"{seconds}s"
 
 
+def command_output_to_text(output: str | bytes | None) -> str:
+    if output is None:
+        return ""
+
+    if isinstance(output, bytes):
+        text = output.decode("utf-8", errors="replace")
+    else:
+        text = str(output)
+
+    text = ANSI_ESCAPE_RE.sub("", text)
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
     command = command.strip()
     if not command:
@@ -120,13 +134,15 @@ def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
             timeout=timeout,
         )
         returncode = completed.returncode
-        stdout = completed.stdout
-        stderr = completed.stderr
+        stdout = command_output_to_text(completed.stdout)
+        stderr = command_output_to_text(completed.stderr)
     except subprocess.TimeoutExpired as exc:
         returncode = 124
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-        stderr = f"{stderr}\nCommand timed out after {format_duration(timeout)}.".lstrip()
+        stdout = command_output_to_text(exc.stdout)
+        stderr = command_output_to_text(exc.stderr)
+        if stderr and not stderr.endswith("\n"):
+            stderr += "\n"
+        stderr += f"Command timed out after {format_duration(timeout)}."
 
     return {
         "command": command,
@@ -710,7 +726,7 @@ def build_index_html(
         </header>
         <pre id="terminal-output" class="terminal-output">$ pwd
 {html.escape(str(root))}</pre>
-        <form id="command-form" class="command-form">
+        <form id="command-form" class="command-form" onsubmit="return false">
           <span class="prompt">$</span>
           <input id="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
           <button class="button" type="submit">Run</button>
@@ -787,11 +803,16 @@ def build_index_html(
       }}
     }}
 
+    function parentFolder(folder) {{
+      if (!folder || !folder.parentElement) return null;
+      return folder.parentElement.closest("details.folder");
+    }}
+
     function updateAncestorChecks(changedCheck) {{
       let folder = changedCheck.closest("details.folder");
 
       if (changedCheck.classList.contains("folder-check")) {{
-        folder = folder?.parentElement?.closest("details.folder");
+        folder = parentFolder(folder);
       }}
 
       while (folder) {{
@@ -802,7 +823,7 @@ def build_index_html(
 
         folderCheck.checked = childChecks.length > 0 && checkedCount === childChecks.length;
         folderCheck.indeterminate = checkedCount > 0 && checkedCount < childChecks.length || partialCount > 0;
-        folder = folder.parentElement?.closest("details.folder");
+        folder = parentFolder(folder);
       }}
     }}
 
@@ -810,13 +831,13 @@ def build_index_html(
       let folder = check.closest("details.folder");
 
       if (check.classList.contains("folder-check")) {{
-        folder = folder?.parentElement?.closest("details.folder");
+        folder = parentFolder(folder);
       }}
 
       while (folder) {{
         const folderCheck = folder.querySelector(":scope > summary > .folder-check");
-        if (folderCheck?.checked) return true;
-        folder = folder.parentElement?.closest("details.folder");
+        if (folderCheck && folderCheck.checked) return true;
+        folder = parentFolder(folder);
       }}
 
       return false;
@@ -856,6 +877,12 @@ def build_index_html(
       if (!command) return;
 
       commandInput.value = "";
+      if (command === "clear") {{
+        terminalOutput.textContent = "";
+        commandInput.focus();
+        return;
+      }}
+
       commandButton.disabled = true;
       appendTerminal(`\n$ ${{command}}\n`);
 
@@ -865,7 +892,7 @@ def build_index_html(
           headers: {{
             "Content-Type": "application/json"
           }},
-          body: JSON.stringify({{ command }})
+          body: JSON.stringify({{ command: command }})
         }});
         const result = await response.json();
 
@@ -876,7 +903,7 @@ def build_index_html(
 
         if (result.stdout) appendTerminal(result.stdout);
         if (result.stderr) appendTerminal(result.stderr);
-        if (!result.stdout && !result.stderr && result.returncode === 0) appendTerminal("exit 0\n");
+        if (!result.stdout && !result.stderr && result.returncode === 0) appendTerminal("exit 0\\n");
         if (result.returncode !== 0) appendTerminal(`[exit ${{result.returncode}}]\n`);
       }} catch (error) {{
         appendTerminal(`${{error.message}}\n`);
