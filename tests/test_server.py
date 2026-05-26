@@ -1,6 +1,7 @@
 from pathlib import Path
 import http.client
 import io
+import json
 import threading
 import zipfile
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ from upload_server.server import (
     parse_duration,
     parse_size,
     resolve_upload_path,
+    run_shell_command,
 )
 
 
@@ -24,8 +26,9 @@ def running_server(
     upload_dir: Path,
     max_upload_size: int | None = None,
     overwrite_uploads: bool = False,
+    command_timeout: int | None = 30,
 ):
-    handler = make_handler(upload_dir, max_upload_size, overwrite_uploads)
+    handler = make_handler(upload_dir, max_upload_size, overwrite_uploads, command_timeout)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -156,6 +159,36 @@ def test_files_for_zip_rejects_parent_traversal(tmp_path: Path) -> None:
         files_for_zip(tmp_path, ["../secret.txt"])
 
 
+def test_run_shell_command_uses_shared_directory(tmp_path: Path) -> None:
+    result = run_shell_command("printf hello > made.txt", tmp_path, timeout=5)
+
+    assert result["returncode"] == 0
+    assert (tmp_path / "made.txt").read_text(encoding="utf-8") == "hello"
+
+
+def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
+    command = json.dumps({"command": "printf endpoint"})
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/run-command",
+            body=command,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(command)),
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+    assert payload["returncode"] == 0
+    assert payload["stdout"] == "endpoint"
+
+
 def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> None:
     (tmp_path / "root.txt").write_text("root", encoding="utf-8")
     (tmp_path / "docs").mkdir()
@@ -171,3 +204,5 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert '<a class="file-name" href="/docs/note.txt">note.txt</a>' in page
     assert '<a class="file-name" href="/root.txt">root.txt</a>' in page
     assert 'id="download-selected"' in page
+    assert 'id="command-form"' in page
+    assert 'id="terminal-output"' in page

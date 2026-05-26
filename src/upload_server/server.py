@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import re
 import shutil
 import socket
+import subprocess
 import tempfile
 import threading
 import time
@@ -15,6 +17,7 @@ from typing import BinaryIO
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 CHUNK_SIZE = 1024 * 1024
+MAX_COMMAND_BODY_SIZE = 64 * 1024
 SIZE_UNITS = {
     "": 1,
     "B": 1,
@@ -95,6 +98,44 @@ def format_duration(seconds: int | None) -> str:
             return f"{seconds // unit_seconds}{unit_name}"
 
     return f"{seconds}s"
+
+
+def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
+    command = command.strip()
+    if not command:
+        raise ValueError("missing command")
+
+    if "\x00" in command:
+        raise ValueError("invalid command")
+
+    started_at = time.monotonic()
+
+    try:
+        completed = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(cwd.resolve()),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        returncode = completed.returncode
+        stdout = completed.stdout
+        stderr = completed.stderr
+    except subprocess.TimeoutExpired as exc:
+        returncode = 124
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        stderr = f"{stderr}\nCommand timed out after {format_duration(timeout)}.".lstrip()
+
+    return {
+        "command": command,
+        "returncode": returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "elapsed": round(time.monotonic() - started_at, 3),
+        "cwd": str(cwd.resolve()),
+    }
 
 
 def resolve_request_path(root_dir: Path, request_path: str) -> Path:
@@ -399,14 +440,23 @@ def build_index_html(
       background: var(--panel);
       white-space: nowrap;
     }}
+    .workbench {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, .9fr);
+      gap: 16px;
+      align-items: stretch;
+      margin-bottom: 24px;
+    }}
+    .panel {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }}
     .upload {{
       border: 1px dashed var(--line);
-      border-radius: 8px;
-      background: var(--panel);
       min-height: 160px;
       display: grid;
       place-items: center;
-      margin-bottom: 24px;
       transition: border-color .15s ease, background .15s ease;
     }}
     .upload.dragover {{
@@ -451,6 +501,55 @@ def build_index_html(
       min-height: 30px;
       padding: 0 10px;
       font-size: 13px;
+    }}
+    .terminal {{
+      min-height: 220px;
+      display: grid;
+      grid-template-rows: auto minmax(120px, 1fr) auto;
+      overflow: hidden;
+    }}
+    .terminal-head {{
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .terminal-output {{
+      margin: 0;
+      min-height: 130px;
+      max-height: 260px;
+      overflow: auto;
+      padding: 12px;
+      background: #10110f;
+      color: #e8f0e8;
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }}
+    .command-form {{
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border-top: 1px solid var(--line);
+    }}
+    .prompt {{
+      color: var(--muted);
+      font: 700 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    }}
+    #command-input {{
+      min-width: 0;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 10px;
+      background: transparent;
+      color: var(--text);
+      font: 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
     }}
     .file-head {{
       display: flex;
@@ -565,6 +664,7 @@ def build_index_html(
     }}
     @media (max-width: 720px) {{
       main {{ width: min(100% - 20px, 1040px); margin-top: 18px; }}
+      .workbench {{ grid-template-columns: minmax(0, 1fr); }}
       header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
       .file-actions {{ justify-content: flex-start; }}
       .stats {{ justify-content: flex-start; }}
@@ -592,15 +692,31 @@ def build_index_html(
       </div>
     </header>
 
-    <section id="drop-zone" class="upload">
-      <div class="upload-inner">
-        <input id="file-picker" type="file" multiple hidden>
-        <button id="choose-files" class="button" type="button">Choose Files</button>
-        <div class="muted">Drop files here</div>
-        <progress id="progress" value="0" max="100" hidden></progress>
-        <p id="status"></p>
-      </div>
-    </section>
+    <div class="workbench">
+      <section id="drop-zone" class="panel upload">
+        <div class="upload-inner">
+          <input id="file-picker" type="file" multiple hidden>
+          <button id="choose-files" class="button" type="button">Choose Files</button>
+          <div class="muted">Drop files here</div>
+          <progress id="progress" value="0" max="100" hidden></progress>
+          <p id="status"></p>
+        </div>
+      </section>
+
+      <section class="panel terminal">
+        <header class="terminal-head">
+          <h2>CLI</h2>
+          <span class="muted">shell</span>
+        </header>
+        <pre id="terminal-output" class="terminal-output">$ pwd
+{html.escape(str(root))}</pre>
+        <form id="command-form" class="command-form">
+          <span class="prompt">$</span>
+          <input id="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
+          <button class="button" type="submit">Run</button>
+        </form>
+      </section>
+    </div>
 
     <section>
       <div class="file-head">
@@ -623,10 +739,15 @@ def build_index_html(
     const maxUploadSize = Number(document.body.dataset.maxUploadSize || "0");
     const selectedDownload = document.getElementById("download-selected");
     const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
+    const commandForm = document.getElementById("command-form");
+    const commandInput = document.getElementById("command-input");
+    const terminalOutput = document.getElementById("terminal-output");
+    const commandButton = commandForm.querySelector("button");
 
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
     selectedDownload.addEventListener("click", downloadSelected);
+    commandForm.addEventListener("submit", runCommand);
 
     for (const check of treeChecks) {{
       check.addEventListener("click", event => event.stopPropagation());
@@ -723,6 +844,48 @@ def build_index_html(
       window.location.href = "/download.zip?" + query.toString();
     }}
 
+    function appendTerminal(text) {{
+      terminalOutput.textContent += text;
+      terminalOutput.scrollTop = terminalOutput.scrollHeight;
+    }}
+
+    async function runCommand(event) {{
+      event.preventDefault();
+
+      const command = commandInput.value.trim();
+      if (!command) return;
+
+      commandInput.value = "";
+      commandButton.disabled = true;
+      appendTerminal(`\n$ ${{command}}\n`);
+
+      try {{
+        const response = await fetch("/run-command", {{
+          method: "POST",
+          headers: {{
+            "Content-Type": "application/json"
+          }},
+          body: JSON.stringify({{ command }})
+        }});
+        const result = await response.json();
+
+        if (!response.ok) {{
+          appendTerminal(`${{result.error || "Command failed"}}\n`);
+          return;
+        }}
+
+        if (result.stdout) appendTerminal(result.stdout);
+        if (result.stderr) appendTerminal(result.stderr);
+        if (!result.stdout && !result.stderr && result.returncode === 0) appendTerminal("exit 0\n");
+        if (result.returncode !== 0) appendTerminal(`[exit ${{result.returncode}}]\n`);
+      }} catch (error) {{
+        appendTerminal(`${{error.message}}\n`);
+      }} finally {{
+        commandButton.disabled = false;
+        commandInput.focus();
+      }}
+    }}
+
     async function uploadFiles(files) {{
       const queue = Array.from(files || []);
       if (!queue.length) return;
@@ -775,6 +938,7 @@ class UploadHandler(SimpleHTTPRequestHandler):
     upload_dir: Path
     max_upload_size: int | None = None
     overwrite_uploads = False
+    command_timeout: int | None = 30
 
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
@@ -855,6 +1019,63 @@ class UploadHandler(SimpleHTTPRequestHandler):
         self.wfile.write(f"Uploaded {relative_path.as_posix()}\n".encode("utf-8"))
         self.log_event(f"Uploaded {relative_path.as_posix()} ({format_size(int(content_length))})")
 
+    def do_POST(self) -> None:
+        path = urlsplit(self.path).path
+
+        if path != "/run-command":
+            self.send_error(404, "Not found")
+            return
+
+        self.run_command()
+
+    def run_command(self) -> None:
+        content_length = self.headers.get("Content-Length")
+        if content_length is None:
+            self.send_json({"error": "Content-Length header is required"}, status=411)
+            return
+
+        try:
+            body_size = int(content_length)
+        except ValueError:
+            self.send_json({"error": "Invalid Content-Length header"}, status=400)
+            return
+
+        if body_size < 0 or body_size > MAX_COMMAND_BODY_SIZE:
+            self.send_json({"error": "Command request is too large"}, status=413)
+            return
+
+        try:
+            payload = json.loads(self.rfile.read(body_size).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, status=400)
+            return
+
+        command = payload.get("command") if isinstance(payload, dict) else None
+        if not isinstance(command, str):
+            self.send_json({"error": "Missing command"}, status=400)
+            return
+
+        try:
+            result = run_shell_command(command, self.upload_dir, self.command_timeout)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, status=400)
+            return
+
+        self.send_json(result)
+        self.log_event(
+            f"Ran command {command!r} "
+            f"(exit {result['returncode']}, {result['elapsed']:.3f}s)"
+        )
+
+    def send_json(self, payload: dict, status: int = 200) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_index_page(self) -> None:
         body = build_index_html(
             self.upload_dir,
@@ -915,6 +1136,7 @@ def make_handler(
     upload_dir: Path,
     max_upload_size: int | None,
     overwrite_uploads: bool,
+    command_timeout: int | None = 30,
 ) -> type[UploadHandler]:
     upload_dir = upload_dir.resolve()
 
@@ -925,6 +1147,7 @@ def make_handler(
     ConfiguredUploadHandler.upload_dir = upload_dir
     ConfiguredUploadHandler.max_upload_size = max_upload_size
     ConfiguredUploadHandler.overwrite_uploads = overwrite_uploads
+    ConfiguredUploadHandler.command_timeout = command_timeout
     return ConfiguredUploadHandler
 
 
@@ -948,6 +1171,7 @@ def print_useful_options() -> None:
     print("  --overwrite         Replace existing files instead of renaming duplicates")
     print("  --max-size 500MB    Reject uploads larger than this size")
     print("  --stop-after 30m    Stop automatically after a short session")
+    print("  --command-timeout 30s  Stop long browser CLI commands")
     print("  --port 9000         Use a different port")
     print("  --host 127.0.0.1    Listen only on this computer")
     print("  --help              Show all options")
@@ -960,9 +1184,10 @@ def run_server(
     max_upload_size: int | None,
     overwrite_uploads: bool,
     stop_after: int | None,
+    command_timeout: int | None,
 ) -> None:
     upload_dir.mkdir(parents=True, exist_ok=True)
-    handler_class = make_handler(upload_dir, max_upload_size, overwrite_uploads)
+    handler_class = make_handler(upload_dir, max_upload_size, overwrite_uploads, command_timeout)
 
     with ThreadingHTTPServer((host, port), handler_class) as server:
         actual_host, actual_port = server.server_address[:2]
@@ -971,6 +1196,7 @@ def run_server(
         print(f"Serving directory: {upload_dir.resolve()}")
         print(f"Upload limit: {format_size(max_upload_size)}")
         print(f"Existing files: {'overwrite' if overwrite_uploads else 'rename'}")
+        print(f"Command timeout: {format_duration(command_timeout)}")
         if stop_after is not None:
             print(f"Auto-stop: {format_duration(stop_after)}")
         print("Open:")
@@ -1012,6 +1238,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Stop automatically after a duration, for example 30m or 2h.",
     )
+    parser.add_argument(
+        "--command-timeout",
+        type=parse_duration,
+        default=30,
+        help="Stop a browser CLI command after this duration. Use 0 to disable.",
+    )
     return parser
 
 
@@ -1026,6 +1258,7 @@ def main(argv: list[str] | None = None) -> int:
             args.max_size,
             args.overwrite,
             args.stop_after,
+            args.command_timeout,
         )
     except KeyboardInterrupt:
         print("\nServer stopped.")

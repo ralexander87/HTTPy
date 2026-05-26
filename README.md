@@ -35,6 +35,8 @@ Open the printed URL in a browser. The page includes:
 - file picker upload
 - download links
 - `Download ZIP` for the whole shared directory
+- selected file/folder ZIP downloads
+- a lightweight CLI panel that runs commands in the shared directory
 
 Existing files are not overwritten by default. If `photo.jpg` already exists, the
 next upload is saved as `photo-1.jpg`.
@@ -75,6 +77,12 @@ Stop automatically after a short sharing session:
 
 ```bash
 python upload_server_standalone.py --stop-after 30m
+```
+
+Limit browser CLI commands:
+
+```bash
+python upload_server_standalone.py --command-timeout 30s
 ```
 
 Choose a different directory:
