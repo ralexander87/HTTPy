@@ -1489,17 +1489,12 @@ def build_index_html(
       commandButton.disabled = true;
       appendTerminal(`\n$ ${{command}}\n`);
 
-      if (!adminTokenValue()) {{
-        appendTerminal("Admin token required.\n");
-        commandButton.disabled = false;
-        commandInput.focus();
-        return;
-      }}
-
       try {{
         const response = await fetch("/run-command", {{
           method: "POST",
-          headers: adminJsonHeaders(),
+          headers: {{
+            "Content-Type": "application/json"
+          }},
           body: JSON.stringify({{ command: command }})
         }});
         const result = await response.json();
@@ -1716,9 +1711,6 @@ class UploadHandler(SimpleHTTPRequestHandler):
     def run_command(self) -> None:
         if not self.runtime_settings.cli_enabled:
             self.send_json({"error": "CLI is disabled"}, status=403)
-            return
-
-        if not self.require_admin():
             return
 
         content_length = self.headers.get("Content-Length")
@@ -1958,7 +1950,7 @@ def make_handler(
 def print_useful_options() -> None:
     print("Useful options:")
     print("  --upload-dir PATH   Share/save files in another directory")
-    print("  --enable-cli        Allow browser CLI commands with admin token")
+    print("  --enable-cli        Allow browser CLI commands")
     print("  --show-hidden       Share hidden/sensitive paths too")
     print("  --overwrite         Replace existing files instead of renaming duplicates")
     print("  --max-size 500MB    Reject uploads larger than this size")
@@ -2009,7 +2001,9 @@ def run_server(
             print(f"Auto-stop: {format_duration(stop_after)}")
         if host in {"", "0.0.0.0"}:
             print("Warning: anyone on this network can access uploads/downloads.")
-            print("CLI and settings require the admin token.")
+            if cli_enabled:
+                print("Warning: browser CLI is open to anyone who can reach this server.")
+            print("Settings and delete actions require the admin token.")
         print("Open:")
         for url in server_urls(host if host else actual_host, actual_port):
             print(f"  {url}")
@@ -2057,7 +2051,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--enable-cli",
         action="store_true",
-        help="Enable browser CLI commands. Requests still require the admin token.",
+        help="Enable browser CLI commands.",
     )
     parser.add_argument(
         "--show-hidden",

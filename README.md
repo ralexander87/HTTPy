@@ -71,8 +71,9 @@ Enable the browser CLI:
 python upload_server_standalone.py --enable-cli
 ```
 
-The server prints an admin token on startup. Browser CLI commands and live
-settings changes require that token.
+Browser CLI commands are enabled only by this flag and do not require the admin
+token. The server still prints an admin token for live settings changes and
+delete actions.
 
 Overwrite existing files:
 

@@ -306,7 +306,6 @@ def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(command)),
-                "X-Admin-Token": TEST_ADMIN_TOKEN,
             },
         )
         response = connection.getresponse()
@@ -330,7 +329,6 @@ def test_run_command_endpoint_requires_cli_enabled(tmp_path: Path) -> None:
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(command)),
-                "X-Admin-Token": TEST_ADMIN_TOKEN,
             },
         )
         response = connection.getresponse()
@@ -341,7 +339,7 @@ def test_run_command_endpoint_requires_cli_enabled(tmp_path: Path) -> None:
     assert payload["error"] == "CLI is disabled"
 
 
-def test_run_command_endpoint_requires_admin_token(tmp_path: Path) -> None:
+def test_run_command_endpoint_does_not_require_admin_token(tmp_path: Path) -> None:
     command = json.dumps({"command": "printf endpoint"})
 
     with running_server(tmp_path, cli_enabled=True) as (host, port):
@@ -356,11 +354,12 @@ def test_run_command_endpoint_requires_admin_token(tmp_path: Path) -> None:
             },
         )
         response = connection.getresponse()
-        assert response.status == 403
+        assert response.status == 200
         payload = json.loads(response.read().decode("utf-8"))
         connection.close()
 
-    assert payload["error"] == "Admin token required"
+    assert payload["returncode"] == 0
+    assert payload["stdout"] == "endpoint"
 
 
 def test_settings_endpoint_updates_upload_limit_without_restart(tmp_path: Path) -> None:
