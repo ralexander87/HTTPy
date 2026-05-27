@@ -24,8 +24,6 @@ from upload_server.server import (
     run_shell_command,
 )
 
-TEST_ADMIN_TOKEN = "test-token"
-
 
 @contextmanager
 def running_server(
@@ -33,18 +31,14 @@ def running_server(
     max_upload_size: int | None = None,
     overwrite_uploads: bool = False,
     command_timeout: int | None = 30,
-    cli_enabled: bool = False,
     show_hidden: bool = False,
-    admin_token: str = TEST_ADMIN_TOKEN,
 ):
     handler = make_handler(
         upload_dir,
         max_upload_size,
         overwrite_uploads,
         command_timeout,
-        cli_enabled=cli_enabled,
         show_hidden=show_hidden,
-        admin_token=admin_token,
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -297,7 +291,7 @@ def test_run_shell_command_timeout_output_is_json_safe(tmp_path: Path) -> None:
 def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
     command = json.dumps({"command": "printf endpoint"})
 
-    with running_server(tmp_path, cli_enabled=True) as (host, port):
+    with running_server(tmp_path) as (host, port):
         connection = http.client.HTTPConnection(host, port)
         connection.request(
             "POST",
@@ -317,32 +311,10 @@ def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
     assert payload["stdout"] == "endpoint"
 
 
-def test_run_command_endpoint_requires_cli_enabled(tmp_path: Path) -> None:
+def test_run_command_endpoint_is_always_available(tmp_path: Path) -> None:
     command = json.dumps({"command": "printf endpoint"})
 
-    with running_server(tmp_path, cli_enabled=False) as (host, port):
-        connection = http.client.HTTPConnection(host, port)
-        connection.request(
-            "POST",
-            "/run-command",
-            body=command,
-            headers={
-                "Content-Type": "application/json",
-                "Content-Length": str(len(command)),
-            },
-        )
-        response = connection.getresponse()
-        assert response.status == 403
-        payload = json.loads(response.read().decode("utf-8"))
-        connection.close()
-
-    assert payload["error"] == "CLI is disabled"
-
-
-def test_run_command_endpoint_does_not_require_admin_token(tmp_path: Path) -> None:
-    command = json.dumps({"command": "printf endpoint"})
-
-    with running_server(tmp_path, cli_enabled=True) as (host, port):
+    with running_server(tmp_path) as (host, port):
         connection = http.client.HTTPConnection(host, port)
         connection.request(
             "POST",
@@ -381,7 +353,6 @@ def test_settings_endpoint_updates_upload_limit_without_restart(tmp_path: Path) 
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(settings)),
-                "X-Admin-Token": TEST_ADMIN_TOKEN,
             },
         )
         response = connection.getresponse()
@@ -421,7 +392,6 @@ def test_settings_endpoint_rejects_invalid_size(tmp_path: Path) -> None:
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(settings)),
-                "X-Admin-Token": TEST_ADMIN_TOKEN,
             },
         )
         response = connection.getresponse()
@@ -430,28 +400,6 @@ def test_settings_endpoint_rejects_invalid_size(tmp_path: Path) -> None:
         connection.close()
 
     assert "Use a size" in payload["error"]
-
-
-def test_settings_endpoint_requires_admin_token(tmp_path: Path) -> None:
-    settings = json.dumps({"max_size": "3"})
-
-    with running_server(tmp_path) as (host, port):
-        connection = http.client.HTTPConnection(host, port)
-        connection.request(
-            "POST",
-            "/settings",
-            body=settings,
-            headers={
-                "Content-Type": "application/json",
-                "Content-Length": str(len(settings)),
-            },
-        )
-        response = connection.getresponse()
-        assert response.status == 403
-        payload = json.loads(response.read().decode("utf-8"))
-        connection.close()
-
-    assert payload["error"] == "Admin token required"
 
 
 def test_delete_endpoint_removes_selected_paths(tmp_path: Path) -> None:
@@ -470,7 +418,6 @@ def test_delete_endpoint_removes_selected_paths(tmp_path: Path) -> None:
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(request_body)),
-                "X-Admin-Token": TEST_ADMIN_TOKEN,
             },
         )
         response = connection.getresponse()
@@ -482,31 +429,6 @@ def test_delete_endpoint_removes_selected_paths(tmp_path: Path) -> None:
     assert (tmp_path / "keep.txt").exists()
     assert not (tmp_path / "remove.txt").exists()
     assert not (tmp_path / "folder").exists()
-
-
-def test_delete_endpoint_requires_admin_token(tmp_path: Path) -> None:
-    target = tmp_path / "remove.txt"
-    target.write_text("remove", encoding="utf-8")
-    request_body = json.dumps({"paths": ["remove.txt"]})
-
-    with running_server(tmp_path) as (host, port):
-        connection = http.client.HTTPConnection(host, port)
-        connection.request(
-            "POST",
-            "/delete",
-            body=request_body,
-            headers={
-                "Content-Type": "application/json",
-                "Content-Length": str(len(request_body)),
-            },
-        )
-        response = connection.getresponse()
-        assert response.status == 403
-        payload = json.loads(response.read().decode("utf-8"))
-        connection.close()
-
-    assert payload["error"] == "Admin token required"
-    assert target.exists()
 
 
 def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> None:
@@ -526,6 +448,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'class="notice" role="note"' in page
     assert "Personal local use only." in page
     assert "Security is minimal" in page
+    assert "upload, download, delete" in page
     assert "Use only on trusted networks" in page
     assert "grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);" in page
     assert "height: 420px;" in page
@@ -544,16 +467,16 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="settings-command-timeout"' in page
     assert 'id="settings-stop-after"' in page
     assert 'id="settings-overwrite"' in page
-    assert 'id="admin-token"' in page
     assert 'id="command-form"' in page
     assert 'class="command-actions"' in page
     assert 'id="run-command"' in page
     assert 'id="clear-command"' in page
     assert 'id="terminal-output"' in page
-    assert 'data-cli-enabled="false"' in page
-    assert "CLI disabled. Restart with --enable-cli" in page
+    assert "CLI enabled" in page
+    assert "<span class=\"muted\">shell</span>" in page
+    assert "$ pwd" in page
+    assert "data-cli-enabled" not in page
     assert 'onsubmit="return false"' in page
-    assert 'appendTerminal("\\nCLI is disabled. Restart with --enable-cli.\\n");' in page
     assert 'appendTerminal(`\\n$ ${command}\\n`);' in page
     assert 'appendTerminal("exit 0\\n");' in page
     assert 'function shellQuote(path)' in page

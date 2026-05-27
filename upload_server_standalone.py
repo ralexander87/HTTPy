@@ -4,7 +4,6 @@ import argparse
 import html
 import json
 import re
-import secrets
 import shutil
 import socket
 import subprocess
@@ -178,10 +177,6 @@ def setting_duration_value(seconds: int | None) -> str:
     return format_duration(seconds)
 
 
-def generate_admin_token() -> str:
-    return secrets.token_urlsafe(9)
-
-
 class RuntimeSettings:
     """Thread-safe settings shared by all request-handler instances."""
 
@@ -191,17 +186,13 @@ class RuntimeSettings:
         overwrite_uploads: bool,
         command_timeout: int | None,
         stop_after: int | None,
-        cli_enabled: bool,
         show_hidden: bool,
-        admin_token: str,
     ) -> None:
         self.max_upload_size = max_upload_size
         self.overwrite_uploads = overwrite_uploads
         self.command_timeout = command_timeout
         self.stop_after = stop_after
-        self.cli_enabled = cli_enabled
         self.show_hidden = show_hidden
-        self.admin_token = admin_token
         self.auto_stop_deadline: float | None = None
         self.auto_stop_timer: threading.Timer | None = None
         self.lock = threading.Lock()
@@ -218,7 +209,6 @@ class RuntimeSettings:
                 "command_timeout": self.command_timeout,
                 "stop_after": self.stop_after,
                 "auto_stop_remaining": remaining,
-                "cli_enabled": self.cli_enabled,
                 "show_hidden": self.show_hidden,
             }
 
@@ -291,7 +281,6 @@ def settings_to_json(settings: RuntimeSettings) -> dict:
         "stop_after_label": format_duration(stop_after),
         "auto_stop_remaining": auto_stop_remaining,
         "auto_stop_remaining_label": format_duration(auto_stop_remaining),
-        "cli_enabled": snapshot["cli_enabled"],
         "show_hidden": snapshot["show_hidden"],
     }
 
@@ -687,7 +676,6 @@ def build_index_html(
     overwrite_uploads: bool,
     command_timeout: int | None = 30,
     stop_after: int | None = None,
-    cli_enabled: bool = False,
     show_hidden: bool = False,
 ) -> bytes:
     """Build the complete browser UI as one self-contained HTML document."""
@@ -703,15 +691,8 @@ def build_index_html(
     command_timeout_value = html.escape(setting_duration_value(command_timeout), quote=True)
     stop_after_value = html.escape(setting_duration_value(stop_after), quote=True)
     overwrite_checked = " checked" if overwrite_uploads else ""
-    cli_text = "enabled" if cli_enabled else "disabled"
     hidden_text = "shown" if show_hidden else "hidden"
-    terminal_header_text = "shell" if cli_enabled else "disabled"
-    terminal_initial = (
-        f"$ pwd\n{html.escape(str(root))}"
-        if cli_enabled
-        else "CLI disabled. Restart with --enable-cli to allow browser commands."
-    )
-    command_disabled = "" if cli_enabled else " disabled"
+    terminal_initial = f"$ pwd\n{html.escape(str(root))}"
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -802,7 +783,7 @@ def build_index_html(
     }}
     .settings-form {{
       display: grid;
-      grid-template-columns: repeat(4, minmax(120px, 1fr)) auto auto;
+      grid-template-columns: repeat(3, minmax(120px, 1fr)) auto auto;
       gap: 10px;
       align-items: end;
     }}
@@ -813,8 +794,7 @@ def build_index_html(
       font-size: 12px;
       font-weight: 700;
     }}
-    .setting-field input[type="text"],
-    .setting-field input[type="password"] {{
+    .setting-field input[type="text"] {{
       min-width: 0;
       min-height: 36px;
       border: 1px solid var(--line);
@@ -1122,7 +1102,7 @@ def build_index_html(
     }}
   </style>
 </head>
-<body data-max-upload-size="{max_upload_size or 0}" data-cli-enabled="{str(cli_enabled).lower()}">
+<body data-max-upload-size="{max_upload_size or 0}">
   <main>
     <header class="top">
       <div>
@@ -1136,16 +1116,16 @@ def build_index_html(
         <span id="stat-overwrite" class="pill">{overwrite_text}</span>
         <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
         <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
-        <span class="pill">CLI {cli_text}</span>
+        <span class="pill">CLI enabled</span>
         <span class="pill">Hidden {hidden_text}</span>
       </div>
     </header>
 
     <section class="notice" role="note">
       <strong>Personal local use only.</strong>
-      Security is minimal: anyone who can reach this server can upload or download files,
-      and the browser CLI can run commands when enabled. Use only on trusted networks and
-      stop the server when finished.
+      Security is minimal: anyone who can reach this server can upload, download, delete,
+      change settings, and run CLI commands. Use only on trusted networks and stop the
+      server when finished.
     </section>
 
     <section class="panel settings-panel">
@@ -1161,10 +1141,6 @@ def build_index_html(
         <label class="setting-field">
           Stop after
           <input id="settings-stop-after" type="text" value="{stop_after_value}" placeholder="off">
-        </label>
-        <label class="setting-field">
-          Admin token
-          <input id="admin-token" type="password" autocomplete="off" placeholder="token">
         </label>
         <label class="setting-check">
           <input id="settings-overwrite" type="checkbox"{overwrite_checked}>
@@ -1189,15 +1165,15 @@ def build_index_html(
       <section class="panel terminal">
         <header class="terminal-head">
           <h2>CLI</h2>
-          <span class="muted">{terminal_header_text}</span>
+          <span class="muted">shell</span>
         </header>
         <pre id="terminal-output" class="terminal-output">{terminal_initial}</pre>
         <form id="command-form" class="command-form" onsubmit="return false">
           <span class="prompt">$</span>
-          <input id="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command"{command_disabled}>
+          <input id="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
           <div class="command-actions">
-            <button id="run-command" class="button" type="submit"{command_disabled}>Run</button>
-            <button id="clear-command" class="button secondary" type="button"{command_disabled}>Clear</button>
+            <button id="run-command" class="button" type="submit">Run</button>
+            <button id="clear-command" class="button secondary" type="button">Clear</button>
           </div>
         </form>
       </section>
@@ -1208,15 +1184,15 @@ def build_index_html(
       <div class="examples-grid">
         <div class="command-example">
           <code id="command-list-selected"></code>
-          <button class="button secondary small run-command-preset" type="button" data-command-target="command-list-selected"{command_disabled}>Run</button>
+          <button class="button secondary small run-command-preset" type="button" data-command-target="command-list-selected">Run</button>
         </div>
         <div class="command-example">
           <code id="command-size-selected"></code>
-          <button class="button secondary small run-command-preset" type="button" data-command-target="command-size-selected"{command_disabled}>Run</button>
+          <button class="button secondary small run-command-preset" type="button" data-command-target="command-size-selected">Run</button>
         </div>
         <div class="command-example">
           <code id="command-stat-selected"></code>
-          <button class="button secondary small run-command-preset" type="button" data-command-target="command-stat-selected"{command_disabled}>Run</button>
+          <button class="button secondary small run-command-preset" type="button" data-command-target="command-stat-selected">Run</button>
         </div>
       </div>
     </section>
@@ -1242,7 +1218,6 @@ def build_index_html(
     const progress = document.getElementById("progress");
     const status = document.getElementById("status");
     let maxUploadSize = Number(document.body.dataset.maxUploadSize || "0");
-    const cliEnabled = document.body.dataset.cliEnabled === "true";
     const selectedDownload = document.getElementById("download-selected");
     const deleteSelected = document.getElementById("delete-selected");
     const refreshFiles = document.getElementById("refresh-files");
@@ -1256,7 +1231,6 @@ def build_index_html(
     const settingsCommandTimeout = document.getElementById("settings-command-timeout");
     const settingsStopAfter = document.getElementById("settings-stop-after");
     const settingsOverwrite = document.getElementById("settings-overwrite");
-    const adminToken = document.getElementById("admin-token");
     const settingsSave = document.getElementById("settings-save");
     const settingsStatus = document.getElementById("settings-status");
     const statUploadLimit = document.getElementById("stat-upload-limit");
@@ -1277,7 +1251,6 @@ def build_index_html(
     settingsForm.addEventListener("submit", saveSettings);
     commandForm.addEventListener("submit", runCommand);
     clearCommandButton.addEventListener("click", runClearCommand);
-    adminToken.value = window.localStorage.getItem("uploadServerAdminToken") || "";
     updateCommandPresets();
 
     for (const button of runPresetButtons) {{
@@ -1391,11 +1364,6 @@ def build_index_html(
       const paths = selectedPaths();
       if (!paths.length) return;
 
-      if (!adminTokenValue()) {{
-        window.alert("Admin token required.");
-        return;
-      }}
-
       const label = paths.length === 1 ? paths[0] : `${{paths.length}} selected items`;
       if (!window.confirm(`Delete ${{label}}?`)) return;
 
@@ -1403,7 +1371,9 @@ def build_index_html(
       try {{
         const response = await fetch("/delete", {{
           method: "POST",
-          headers: adminJsonHeaders(),
+          headers: {{
+            "Content-Type": "application/json"
+          }},
           body: JSON.stringify({{ paths: paths }})
         }});
         const result = await response.json();
@@ -1445,32 +1415,16 @@ def build_index_html(
     }}
 
     function setCommandRunning(isRunning) {{
-      commandButton.disabled = isRunning || !cliEnabled;
-      clearCommandButton.disabled = isRunning || !cliEnabled;
+      commandButton.disabled = isRunning;
+      clearCommandButton.disabled = isRunning;
       for (const button of runPresetButtons) {{
-        button.disabled = isRunning || !cliEnabled;
+        button.disabled = isRunning;
       }}
     }}
 
     function appendTerminal(text) {{
       terminalOutput.textContent += text;
       terminalOutput.scrollTop = terminalOutput.scrollHeight;
-    }}
-
-    function adminTokenValue() {{
-      const token = adminToken.value.trim();
-      if (token) {{
-        window.localStorage.setItem("uploadServerAdminToken", token);
-      }}
-      return token;
-    }}
-
-    function adminJsonHeaders() {{
-      const token = adminTokenValue();
-      return {{
-        "Content-Type": "application/json",
-        "X-Admin-Token": token
-      }};
     }}
 
     function applySettings(settings) {{
@@ -1493,17 +1447,12 @@ def build_index_html(
       settingsStatus.className = "settings-status";
       settingsStatus.textContent = "Saving";
 
-      if (!adminTokenValue()) {{
-        settingsStatus.className = "settings-status error";
-        settingsStatus.textContent = "Admin token required";
-        settingsSave.disabled = false;
-        return;
-      }}
-
       try {{
         const response = await fetch("/settings", {{
           method: "POST",
-          headers: adminJsonHeaders(),
+          headers: {{
+            "Content-Type": "application/json"
+          }},
           body: JSON.stringify({{
             max_size: settingsMaxSize.value.trim(),
             command_timeout: settingsCommandTimeout.value.trim(),
@@ -1542,11 +1491,6 @@ def build_index_html(
 
     async function executeCommand(command) {{
       if (!command) return;
-
-      if (!cliEnabled) {{
-        appendTerminal("\\nCLI is disabled. Restart with --enable-cli.\\n");
-        return;
-      }}
 
       if (command === "clear") {{
         terminalOutput.textContent = "";
@@ -1637,18 +1581,6 @@ class UploadHandler(SimpleHTTPRequestHandler):
     server_version = "UploadHTTP/0.2"
     upload_dir: Path
     runtime_settings: RuntimeSettings
-
-    def is_admin_request(self) -> bool:
-        provided_token = self.headers.get("X-Admin-Token", "")
-        expected_token = self.runtime_settings.admin_token
-        return secrets.compare_digest(provided_token, expected_token)
-
-    def require_admin(self) -> bool:
-        if self.is_admin_request():
-            return True
-
-        self.send_json({"error": "Admin token required"}, status=403)
-        return False
 
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
@@ -1783,10 +1715,6 @@ class UploadHandler(SimpleHTTPRequestHandler):
         self.send_error(404, "Not found")
 
     def run_command(self) -> None:
-        if not self.runtime_settings.cli_enabled:
-            self.send_json({"error": "CLI is disabled"}, status=403)
-            return
-
         content_length = self.headers.get("Content-Length")
         if content_length is None:
             self.send_json({"error": "Content-Length header is required"}, status=411)
@@ -1827,9 +1755,6 @@ class UploadHandler(SimpleHTTPRequestHandler):
         )
 
     def update_settings(self) -> None:
-        if not self.require_admin():
-            return
-
         content_length = self.headers.get("Content-Length")
         if content_length is None:
             self.send_json({"error": "Content-Length header is required"}, status=411)
@@ -1867,9 +1792,6 @@ class UploadHandler(SimpleHTTPRequestHandler):
         )
 
     def delete_selected(self) -> None:
-        if not self.require_admin():
-            return
-
         content_length = self.headers.get("Content-Length")
         if content_length is None:
             self.send_json({"error": "Content-Length header is required"}, status=411)
@@ -1935,7 +1857,6 @@ class UploadHandler(SimpleHTTPRequestHandler):
             settings["overwrite_uploads"],
             settings["command_timeout"],
             settings["stop_after"],
-            settings["cli_enabled"],
             settings["show_hidden"],
         )
         self.send_response(200)
@@ -1997,9 +1918,7 @@ def make_handler(
     overwrite_uploads: bool = False,
     command_timeout: int | None = 30,
     stop_after: int | None = None,
-    cli_enabled: bool = False,
     show_hidden: bool = False,
-    admin_token: str | None = None,
     runtime_settings: RuntimeSettings | None = None,
 ) -> type[UploadHandler]:
     """Bind one configured upload directory/settings object to the handler class."""
@@ -2010,9 +1929,7 @@ def make_handler(
             overwrite_uploads,
             command_timeout,
             stop_after,
-            cli_enabled,
             show_hidden,
-            admin_token or generate_admin_token(),
         )
 
     class ConfiguredUploadHandler(UploadHandler):
@@ -2028,7 +1945,6 @@ def make_handler(
 def print_useful_options() -> None:
     print("Useful options:")
     print("  --upload-dir PATH   Share/save files in another directory")
-    print("  --enable-cli        Allow browser CLI commands")
     print("  --show-hidden       Share hidden/sensitive paths too")
     print("  --overwrite         Replace existing files instead of renaming duplicates")
     print("  --max-size 500MB    Reject uploads larger than this size")
@@ -2047,20 +1963,15 @@ def run_server(
     overwrite_uploads: bool,
     stop_after: int | None,
     command_timeout: int | None,
-    cli_enabled: bool,
     show_hidden: bool,
-    admin_token: str | None,
 ) -> None:
     upload_dir.mkdir(parents=True, exist_ok=True)
-    admin_token = admin_token or generate_admin_token()
     runtime_settings = RuntimeSettings(
         max_upload_size,
         overwrite_uploads,
         command_timeout,
         stop_after,
-        cli_enabled,
         show_hidden,
-        admin_token,
     )
     handler_class = make_handler(upload_dir, runtime_settings=runtime_settings)
 
@@ -2072,16 +1983,15 @@ def run_server(
         print(f"Upload limit: {format_size(max_upload_size)}")
         print(f"Existing files: {'overwrite' if overwrite_uploads else 'rename'}")
         print(f"Command timeout: {format_duration(command_timeout)}")
-        print(f"CLI: {'enabled' if cli_enabled else 'disabled'}")
+        print("CLI: enabled")
         print(f"Hidden files: {'shown' if show_hidden else 'hidden'}")
-        print(f"Admin token: {admin_token}")
         if stop_after is not None:
             print(f"Auto-stop: {format_duration(stop_after)}")
         if host in {"", "0.0.0.0"}:
-            print("Warning: anyone on this network can access uploads/downloads.")
-            if cli_enabled:
-                print("Warning: browser CLI is open to anyone who can reach this server.")
-            print("Settings and delete actions require the admin token.")
+            print(
+                "Warning: anyone on this network can upload, download, delete, "
+                "change settings, and run CLI commands."
+            )
         print("Open:")
         for url in server_urls(host if host else actual_host, actual_port):
             print(f"  {url}")
@@ -2127,19 +2037,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop a browser CLI command after this duration. Use 0 to disable.",
     )
     parser.add_argument(
-        "--enable-cli",
-        action="store_true",
-        help="Enable browser CLI commands.",
-    )
-    parser.add_argument(
         "--show-hidden",
         action="store_true",
         help="List and serve hidden/sensitive paths such as .git and .env.",
-    )
-    parser.add_argument(
-        "--admin-token",
-        default=None,
-        help="Use a specific admin token instead of generating one.",
     )
     return parser
 
@@ -2156,9 +2056,7 @@ def main(argv: list[str] | None = None) -> int:
             args.overwrite,
             args.stop_after,
             args.command_timeout,
-            args.enable_cli,
             args.show_hidden,
-            args.admin_token,
         )
     except KeyboardInterrupt:
         print("\nServer stopped.")

@@ -36,10 +36,10 @@ Open the printed URL in a browser. The page includes:
 - download links
 - `Download ZIP` for the whole shared directory
 - selected file/folder ZIP downloads
-- selected file/folder delete, protected by the admin token
+- selected file/folder delete
 - a refresh button for the file list
 - selected file/folder command presets for list, size, and stat
-- an optional lightweight CLI panel that runs commands in the shared directory
+- a lightweight CLI panel that runs commands in the shared directory
 - live settings for upload size, overwrite mode, command timeout, and auto-stop
 
 Existing files are not overwritten by default. If `photo.jpg` already exists, the
@@ -65,15 +65,9 @@ Invoke-WebRequest -Uri "http://SERVER_IP:8000/myfile.txt" -Method PUT -InFile "C
 
 ## Useful Options
 
-Enable the browser CLI:
-
-```bash
-python upload_server_standalone.py --enable-cli
-```
-
-Browser CLI commands are enabled only by this flag and do not require the admin
-token. The server still prints an admin token for live settings changes and
-delete actions.
+The browser CLI, settings, upload, download, and delete actions are always
+available without authentication. Use this only for short personal sessions on
+trusted networks.
 
 Overwrite existing files:
 
@@ -112,6 +106,6 @@ python upload_server_standalone.py --show-hidden
 ```
 
 By default, hidden/sensitive paths are not listed or served, directory listings
-are disabled, and symlinks that escape the shared directory are blocked. File
-upload/download remains open to anyone who can reach the server, so use it on a
-trusted network.
+are disabled, and symlinks that escape the shared directory are blocked. Anyone
+who can reach the server can still upload, download, delete, change settings,
+and run CLI commands, so use it only on a trusted network.
