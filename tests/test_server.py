@@ -312,12 +312,14 @@ def test_run_command_endpoint_is_always_available(tmp_path: Path) -> None:
 
 
 def test_settings_endpoint_updates_upload_limit_without_restart(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("secret", encoding="utf-8")
     settings = json.dumps(
         {
             "max_size": "3",
             "command_timeout": "1s",
             "stop_after": "0",
             "overwrite": True,
+            "show_hidden": True,
         }
     )
 
@@ -341,6 +343,15 @@ def test_settings_endpoint_updates_upload_limit_without_restart(tmp_path: Path) 
         assert payload["command_timeout_seconds"] == 1
         assert payload["stop_after_seconds"] is None
         assert payload["overwrite"] is True
+        assert payload["show_hidden"] is True
+        assert payload["show_hidden_label"] == "Visible"
+
+        connection = http.client.HTTPConnection(host, port)
+        connection.request("GET", "/.env")
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.read() == b"secret"
+        connection.close()
 
         connection = http.client.HTTPConnection(host, port)
         connection.request(
@@ -443,7 +454,13 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="settings-max-size"' in page
     assert 'id="settings-command-timeout"' in page
     assert 'id="settings-stop-after"' in page
-    assert 'id="settings-overwrite"' in page
+    assert 'id="settings-overwrite"' not in page
+    assert 'id="stat-overwrite"' in page
+    assert 'data-enabled="false"' in page
+    assert ">Rename</button>" in page
+    assert 'id="stat-hidden"' in page
+    assert 'data-visible="false"' in page
+    assert ">Hidden</button>" in page
     assert 'id="command-form"' in page
     assert 'class="command-actions"' in page
     assert 'id="run-command"' in page
@@ -456,6 +473,12 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'onsubmit="return false"' in page
     assert 'appendTerminal(`\\n$ ${command}\\n`);' in page
     assert 'appendTerminal("exit 0\\n");' in page
+    assert 'statOverwrite.addEventListener("click", toggleOverwriteMode);' in page
+    assert 'statHidden.addEventListener("click", toggleHiddenVisibility);' in page
+    assert 'async function postSettings(updates)' in page
+    assert 'async function toggleOverwriteMode()' in page
+    assert 'async function toggleHiddenVisibility()' in page
+    assert 'show_hidden: statHidden.dataset.visible !== "true"' in page
     assert 'function shellQuote(path)' in page
     assert 'path.split("\'").join("\'\\"\'\\"\'")' in page
     assert 'commandListSelected.textContent = `ls -lah -- ${args}`;' in page

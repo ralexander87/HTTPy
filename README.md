@@ -40,7 +40,7 @@ Open the printed URL in a browser. The page includes:
 - a refresh button for the file list
 - selected file/folder command presets for list, size, and stat
 - a lightweight CLI panel that runs commands in the shared directory
-- live settings for upload size, overwrite mode, command timeout, and auto-stop
+- live settings for upload size, rename/overwrite mode, hidden visibility, command timeout, and auto-stop
 
 Existing files are not overwritten by default. If `photo.jpg` already exists, the
 next upload is saved as `photo-1.jpg`.

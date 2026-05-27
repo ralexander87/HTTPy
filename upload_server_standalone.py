@@ -223,6 +223,8 @@ class RuntimeSettings:
             if "stop_after" in updates:
                 self.stop_after = updates["stop_after"]
                 self._schedule_auto_stop_locked(server)
+            if "show_hidden" in updates:
+                self.show_hidden = updates["show_hidden"]
 
     def start_auto_stop(self, server: ThreadingHTTPServer) -> None:
         with self.lock:
@@ -272,7 +274,7 @@ def settings_to_json(settings: RuntimeSettings) -> dict:
         "max_size": setting_size_value(max_upload_size),
         "max_size_label": format_size(max_upload_size),
         "overwrite": overwrite_uploads,
-        "overwrite_label": "overwrite" if overwrite_uploads else "rename",
+        "overwrite_label": "Overwrite" if overwrite_uploads else "Rename",
         "command_timeout_seconds": command_timeout,
         "command_timeout": setting_duration_value(command_timeout),
         "command_timeout_label": format_duration(command_timeout),
@@ -282,6 +284,7 @@ def settings_to_json(settings: RuntimeSettings) -> dict:
         "auto_stop_remaining": auto_stop_remaining,
         "auto_stop_remaining_label": format_duration(auto_stop_remaining),
         "show_hidden": snapshot["show_hidden"],
+        "show_hidden_label": "Visible" if snapshot["show_hidden"] else "Hidden",
     }
 
 
@@ -304,6 +307,11 @@ def parse_settings_payload(payload: object) -> dict:
 
     if "stop_after" in payload:
         updates["stop_after"] = parse_duration(str(payload["stop_after"]))
+
+    if "show_hidden" in payload:
+        if not isinstance(payload["show_hidden"], bool):
+            raise ValueError("show_hidden must be true or false")
+        updates["show_hidden"] = payload["show_hidden"]
 
     return updates
 
@@ -684,14 +692,15 @@ def build_index_html(
     total_size = sum(path.stat().st_size for path in files)
     file_tree = render_file_tree(root, files)
     max_size_text = format_size(max_upload_size)
-    overwrite_text = "overwrite" if overwrite_uploads else "rename"
+    overwrite_text = "Overwrite" if overwrite_uploads else "Rename"
     command_timeout_text = format_duration(command_timeout)
     stop_after_text = format_duration(stop_after)
     max_size_value = html.escape(setting_size_value(max_upload_size), quote=True)
     command_timeout_value = html.escape(setting_duration_value(command_timeout), quote=True)
     stop_after_value = html.escape(setting_duration_value(stop_after), quote=True)
-    overwrite_checked = " checked" if overwrite_uploads else ""
-    hidden_text = "shown" if show_hidden else "hidden"
+    overwrite_pressed = str(overwrite_uploads).lower()
+    hidden_text = "Visible" if show_hidden else "Hidden"
+    hidden_pressed = str(show_hidden).lower()
     terminal_initial = f"$ pwd\n{html.escape(str(root))}"
 
     document = f"""<!doctype html>
@@ -764,6 +773,20 @@ def build_index_html(
       background: var(--panel);
       white-space: nowrap;
     }}
+    .pill-button {{
+      color: var(--muted);
+      font: inherit;
+      cursor: pointer;
+    }}
+    .pill-button:hover,
+    .pill-button[aria-pressed="true"] {{
+      border-color: var(--accent);
+      color: var(--accent);
+    }}
+    .pill-button:disabled {{
+      cursor: not-allowed;
+      opacity: .65;
+    }}
     .notice {{
       margin: -4px 0 16px;
       border: 1px solid var(--line);
@@ -783,7 +806,7 @@ def build_index_html(
     }}
     .settings-form {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(120px, 1fr)) auto auto;
+      grid-template-columns: repeat(3, minmax(120px, 1fr)) auto;
       gap: 10px;
       align-items: end;
     }}
@@ -804,21 +827,6 @@ def build_index_html(
       color: var(--text);
       font: 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
       font-weight: 400;
-    }}
-    .setting-check {{
-      min-height: 36px;
-      display: inline-flex;
-      gap: 8px;
-      align-items: center;
-      color: var(--text);
-      font-size: 14px;
-      font-weight: 650;
-      white-space: nowrap;
-    }}
-    .setting-check input {{
-      width: 16px;
-      height: 16px;
-      accent-color: var(--accent);
     }}
     .settings-status {{
       min-height: 20px;
@@ -1089,7 +1097,6 @@ def build_index_html(
       .workbench {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
-      .setting-check {{ justify-content: flex-start; }}
       header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
       .file-actions {{ justify-content: flex-start; }}
       .stats {{ justify-content: flex-start; }}
@@ -1113,10 +1120,10 @@ def build_index_html(
         <span class="pill">{len(files)} files</span>
         <span class="pill">{format_size(total_size)}</span>
         <span id="stat-upload-limit" class="pill">Limit {max_size_text}</span>
-        <span id="stat-overwrite" class="pill">{overwrite_text}</span>
+        <button id="stat-overwrite" class="pill pill-button" type="button" data-enabled="{overwrite_pressed}" aria-pressed="{overwrite_pressed}">{overwrite_text}</button>
         <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
         <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
-        <span class="pill">Hidden {hidden_text}</span>
+        <button id="stat-hidden" class="pill pill-button" type="button" data-visible="{hidden_pressed}" aria-pressed="{hidden_pressed}">{hidden_text}</button>
       </div>
     </header>
 
@@ -1140,10 +1147,6 @@ def build_index_html(
         <label class="setting-field">
           Stop after
           <input id="settings-stop-after" type="text" value="{stop_after_value}" placeholder="off">
-        </label>
-        <label class="setting-check">
-          <input id="settings-overwrite" type="checkbox"{overwrite_checked}>
-          Overwrite
         </label>
         <button id="settings-save" class="button" type="submit">Save</button>
         <div id="settings-status" class="settings-status"></div>
@@ -1229,11 +1232,11 @@ def build_index_html(
     const settingsMaxSize = document.getElementById("settings-max-size");
     const settingsCommandTimeout = document.getElementById("settings-command-timeout");
     const settingsStopAfter = document.getElementById("settings-stop-after");
-    const settingsOverwrite = document.getElementById("settings-overwrite");
     const settingsSave = document.getElementById("settings-save");
     const settingsStatus = document.getElementById("settings-status");
     const statUploadLimit = document.getElementById("stat-upload-limit");
     const statOverwrite = document.getElementById("stat-overwrite");
+    const statHidden = document.getElementById("stat-hidden");
     const statCommandTimeout = document.getElementById("stat-command-timeout");
     const statAutoStop = document.getElementById("stat-auto-stop");
     const commandForm = document.getElementById("command-form");
@@ -1248,6 +1251,8 @@ def build_index_html(
     deleteSelected.addEventListener("click", deleteSelectedFiles);
     refreshFiles.addEventListener("click", () => window.location.reload());
     settingsForm.addEventListener("submit", saveSettings);
+    statOverwrite.addEventListener("click", toggleOverwriteMode);
+    statHidden.addEventListener("click", toggleHiddenVisibility);
     commandForm.addEventListener("submit", runCommand);
     clearCommandButton.addEventListener("click", runClearCommand);
     updateCommandPresets();
@@ -1426,23 +1431,31 @@ def build_index_html(
       terminalOutput.scrollTop = terminalOutput.scrollHeight;
     }}
 
+    function setSettingsRunning(isRunning) {{
+      settingsSave.disabled = isRunning;
+      statOverwrite.disabled = isRunning;
+      statHidden.disabled = isRunning;
+    }}
+
     function applySettings(settings) {{
       maxUploadSize = settings.max_upload_size || 0;
       document.body.dataset.maxUploadSize = String(maxUploadSize);
       settingsMaxSize.value = settings.max_size || "";
       settingsCommandTimeout.value = settings.command_timeout || "";
       settingsStopAfter.value = settings.stop_after || "";
-      settingsOverwrite.checked = Boolean(settings.overwrite);
       statUploadLimit.textContent = `Limit ${{settings.max_size_label}}`;
       statOverwrite.textContent = settings.overwrite_label;
+      statOverwrite.dataset.enabled = String(Boolean(settings.overwrite));
+      statOverwrite.setAttribute("aria-pressed", String(Boolean(settings.overwrite)));
+      statHidden.textContent = settings.show_hidden_label;
+      statHidden.dataset.visible = String(Boolean(settings.show_hidden));
+      statHidden.setAttribute("aria-pressed", String(Boolean(settings.show_hidden)));
       statCommandTimeout.textContent = `CLI ${{settings.command_timeout_label}}`;
       statAutoStop.textContent = `Stop ${{settings.stop_after_label}}`;
     }}
 
-    async function saveSettings(event) {{
-      event.preventDefault();
-
-      settingsSave.disabled = true;
+    async function postSettings(updates) {{
+      setSettingsRunning(true);
       settingsStatus.className = "settings-status";
       settingsStatus.textContent = "Saving";
 
@@ -1452,12 +1465,7 @@ def build_index_html(
           headers: {{
             "Content-Type": "application/json"
           }},
-          body: JSON.stringify({{
-            max_size: settingsMaxSize.value.trim(),
-            command_timeout: settingsCommandTimeout.value.trim(),
-            stop_after: settingsStopAfter.value.trim(),
-            overwrite: settingsOverwrite.checked
-          }})
+          body: JSON.stringify(updates)
         }});
         const result = await response.json();
 
@@ -1469,11 +1477,33 @@ def build_index_html(
 
         applySettings(result);
         settingsStatus.textContent = "Saved";
+        return result;
       }} catch (error) {{
         settingsStatus.className = "settings-status error";
         settingsStatus.textContent = error.message;
+        return null;
       }} finally {{
-        settingsSave.disabled = false;
+        setSettingsRunning(false);
+      }}
+    }}
+
+    async function saveSettings(event) {{
+      event.preventDefault();
+      await postSettings({{
+        max_size: settingsMaxSize.value.trim(),
+        command_timeout: settingsCommandTimeout.value.trim(),
+        stop_after: settingsStopAfter.value.trim()
+      }});
+    }}
+
+    async function toggleOverwriteMode() {{
+      await postSettings({{ overwrite: statOverwrite.dataset.enabled !== "true" }});
+    }}
+
+    async function toggleHiddenVisibility() {{
+      const result = await postSettings({{ show_hidden: statHidden.dataset.visible !== "true" }});
+      if (result) {{
+        window.location.reload();
       }}
     }}
 
