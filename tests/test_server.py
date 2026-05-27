@@ -455,6 +455,9 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="settings-command-timeout"' in page
     assert 'id="settings-stop-after"' in page
     assert 'id="settings-overwrite"' not in page
+    assert 'class="toggle-group"' in page
+    assert ".pill-button {" in page
+    assert "background: var(--accent);" in page
     assert 'id="stat-overwrite"' in page
     assert 'data-enabled="false"' in page
     assert ">Rename</button>" in page

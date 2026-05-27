@@ -773,15 +773,21 @@ def build_index_html(
       background: var(--panel);
       white-space: nowrap;
     }}
+    .toggle-group {{
+      display: inline-flex;
+      gap: 6px;
+    }}
     .pill-button {{
-      color: var(--muted);
+      background: var(--accent);
+      color: #fff;
       font: inherit;
       cursor: pointer;
     }}
     .pill-button:hover,
     .pill-button[aria-pressed="true"] {{
       border-color: var(--accent);
-      color: var(--accent);
+      background: var(--accent-strong);
+      color: #fff;
     }}
     .pill-button:disabled {{
       cursor: not-allowed;
@@ -1120,10 +1126,12 @@ def build_index_html(
         <span class="pill">{len(files)} files</span>
         <span class="pill">{format_size(total_size)}</span>
         <span id="stat-upload-limit" class="pill">Limit {max_size_text}</span>
-        <button id="stat-overwrite" class="pill pill-button" type="button" data-enabled="{overwrite_pressed}" aria-pressed="{overwrite_pressed}">{overwrite_text}</button>
         <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
         <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
-        <button id="stat-hidden" class="pill pill-button" type="button" data-visible="{hidden_pressed}" aria-pressed="{hidden_pressed}">{hidden_text}</button>
+        <span class="toggle-group">
+          <button id="stat-overwrite" class="pill pill-button" type="button" data-enabled="{overwrite_pressed}" aria-pressed="{overwrite_pressed}">{overwrite_text}</button>
+          <button id="stat-hidden" class="pill pill-button" type="button" data-visible="{hidden_pressed}" aria-pressed="{hidden_pressed}">{hidden_text}</button>
+        </span>
       </div>
     </header>
 
