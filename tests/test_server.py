@@ -199,10 +199,18 @@ def test_hidden_files_are_filtered_by_default(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("secret", encoding="utf-8")
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git" / "config").write_text("secret", encoding="utf-8")
+    (tmp_path / "venv").mkdir()
+    (tmp_path / "venv" / "activate").write_text("not hidden", encoding="utf-8")
     (tmp_path / "__pycache__").mkdir()
     (tmp_path / "__pycache__" / "module.pyc").write_bytes(b"secret")
 
-    assert [path.name for path in iter_shared_files(tmp_path)] == ["public.txt"]
+    visible_paths = {path.relative_to(tmp_path) for path in iter_shared_files(tmp_path)}
+
+    assert visible_paths == {
+        Path("__pycache__/module.pyc"),
+        Path("public.txt"),
+        Path("venv/activate"),
+    }
 
     with pytest.raises(PermissionError, match="hidden paths"):
         resolve_request_path(tmp_path, "/.env")

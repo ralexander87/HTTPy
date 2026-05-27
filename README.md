@@ -99,13 +99,13 @@ Choose a different directory:
 python upload_server_standalone.py --upload-dir /path/to/share
 ```
 
-Show hidden/sensitive paths such as `.git`, `.env`, and `.venv`:
+Show dot-hidden paths such as `.git`, `.env`, and `.venv`:
 
 ```bash
 python upload_server_standalone.py --show-hidden
 ```
 
-By default, hidden/sensitive paths are not listed or served, directory listings
+By default, dot-hidden paths are not listed or served, directory listings
 are disabled, and symlinks that escape the shared directory are blocked. Anyone
 who can reach the server can still upload, download, delete, change settings,
 and run CLI commands, so use it only on a trusted network.

@@ -21,9 +21,6 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 CHUNK_SIZE = 1024 * 1024
 MAX_COMMAND_BODY_SIZE = 64 * 1024
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-HIDDEN_DIR_NAMES = {".git", ".hg", ".svn", ".venv", "venv", "__pycache__", ".pytest_cache"}
-HIDDEN_FILE_NAMES = {".env", ".env.local", ".envrc"}
-HIDDEN_FILE_SUFFIXES = {".pyc", ".pyo", ".pyd"}
 SIZE_UNITS = {
     "": 1,
     "B": 1,
@@ -317,7 +314,7 @@ def parse_settings_payload(payload: object) -> dict:
 
 
 # Path handling is centralized here so uploads, downloads, ZIPs, and deletes all
-# follow the same traversal, hidden-file, and symlink escape rules.
+# follow the same traversal, dot-hidden path, and symlink escape rules.
 def relative_path_from_root(root_dir: Path, path: Path) -> Path:
     try:
         return path.resolve().relative_to(root_dir.resolve())
@@ -326,14 +323,7 @@ def relative_path_from_root(root_dir: Path, path: Path) -> Path:
 
 
 def is_hidden_relative_path(relative_path: Path) -> bool:
-    parts = relative_path.parts
-    if any(part.startswith(".") for part in parts):
-        return True
-    if any(part in HIDDEN_DIR_NAMES for part in parts[:-1]):
-        return True
-    if relative_path.name in HIDDEN_FILE_NAMES:
-        return True
-    return relative_path.suffix in HIDDEN_FILE_SUFFIXES
+    return any(part.startswith(".") for part in relative_path.parts)
 
 
 def ensure_shared_path_allowed(root_dir: Path, path: Path, show_hidden: bool) -> Path:
@@ -1984,7 +1974,7 @@ def make_handler(
 def print_useful_options() -> None:
     print("Useful options:")
     print("  --upload-dir PATH   Share/save files in another directory")
-    print("  --show-hidden       Share hidden/sensitive paths too")
+    print("  --show-hidden       Share dot-hidden paths too")
     print("  --overwrite         Replace existing files instead of renaming duplicates")
     print("  --max-size 500MB    Reject uploads larger than this size")
     print("  --stop-after 30m    Stop automatically after a short session")
@@ -2077,7 +2067,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--show-hidden",
         action="store_true",
-        help="List and serve hidden/sensitive paths such as .git and .env.",
+        help="List and serve dot-hidden paths such as .git and .env.",
     )
     return parser
 
