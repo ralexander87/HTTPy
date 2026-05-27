@@ -10,6 +10,7 @@ from http.server import ThreadingHTTPServer
 import pytest
 
 from upload_server.server import (
+    build_parser,
     build_index_html,
     command_output_to_text,
     delete_selected_paths,
@@ -80,6 +81,14 @@ def test_parse_duration_accepts_human_units() -> None:
     assert parse_duration("30m") == 30 * 60
     assert parse_duration("2h") == 2 * 60 * 60
     assert parse_duration("0") is None
+
+
+def test_startup_parser_leaves_browser_only_toggles_out_of_cli() -> None:
+    help_text = build_parser().format_help()
+
+    assert "--overwrite" not in help_text
+    assert "--show-hidden" not in help_text
+    assert "--max-size" in help_text
 
 
 def test_open_upload_target_renames_existing_file(tmp_path: Path) -> None:

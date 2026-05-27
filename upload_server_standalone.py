@@ -1974,8 +1974,6 @@ def make_handler(
 def print_useful_options() -> None:
     print("Useful options:")
     print("  --upload-dir PATH   Share/save files in another directory")
-    print("  --show-hidden       Share dot-hidden paths too")
-    print("  --overwrite         Replace existing files instead of renaming duplicates")
     print("  --max-size 500MB    Reject uploads larger than this size")
     print("  --stop-after 30m    Stop automatically after a short session")
     print("  --command-timeout 30s  Stop long browser CLI commands")
@@ -1989,18 +1987,16 @@ def run_server(
     port: int,
     upload_dir: Path,
     max_upload_size: int | None,
-    overwrite_uploads: bool,
     stop_after: int | None,
     command_timeout: int | None,
-    show_hidden: bool,
 ) -> None:
     upload_dir.mkdir(parents=True, exist_ok=True)
     runtime_settings = RuntimeSettings(
         max_upload_size,
-        overwrite_uploads,
+        False,
         command_timeout,
         stop_after,
-        show_hidden,
+        False,
     )
     handler_class = make_handler(upload_dir, runtime_settings=runtime_settings)
 
@@ -2010,9 +2006,7 @@ def run_server(
 
         print(f"Serving directory: {upload_dir.resolve()}")
         print(f"Upload limit: {format_size(max_upload_size)}")
-        print(f"Existing files: {'overwrite' if overwrite_uploads else 'rename'}")
         print(f"Command timeout: {format_duration(command_timeout)}")
-        print(f"Hidden files: {'shown' if show_hidden else 'hidden'}")
         if stop_after is not None:
             print(f"Auto-stop: {format_duration(stop_after)}")
         if host in {"", "0.0.0.0"}:
@@ -2042,11 +2036,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory where uploaded files are stored. Defaults to the current directory.",
     )
     parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite existing files instead of saving duplicates as name-1.ext.",
-    )
-    parser.add_argument(
         "--max-size",
         type=parse_size,
         default=None,
@@ -2064,11 +2053,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=30,
         help="Stop a browser CLI command after this duration. Use 0 to disable.",
     )
-    parser.add_argument(
-        "--show-hidden",
-        action="store_true",
-        help="List and serve dot-hidden paths such as .git and .env.",
-    )
     return parser
 
 
@@ -2081,10 +2065,8 @@ def main(argv: list[str] | None = None) -> int:
             args.port,
             args.upload_dir,
             args.max_size,
-            args.overwrite,
             args.stop_after,
             args.command_timeout,
-            args.show_hidden,
         )
     except KeyboardInterrupt:
         print("\nServer stopped.")

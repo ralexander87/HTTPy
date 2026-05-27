@@ -69,12 +69,6 @@ The browser CLI, settings, upload, download, and delete actions are always
 available without authentication. Use this only for short personal sessions on
 trusted networks.
 
-Overwrite existing files:
-
-```bash
-python upload_server_standalone.py --overwrite
-```
-
 Limit each upload:
 
 ```bash
@@ -99,13 +93,10 @@ Choose a different directory:
 python upload_server_standalone.py --upload-dir /path/to/share
 ```
 
-Show dot-hidden paths such as `.git`, `.env`, and `.venv`:
-
-```bash
-python upload_server_standalone.py --show-hidden
-```
-
 By default, dot-hidden paths are not listed or served, directory listings
 are disabled, and symlinks that escape the shared directory are blocked. Anyone
 who can reach the server can still upload, download, delete, change settings,
 and run CLI commands, so use it only on a trusted network.
+
+Use the browser buttons to switch Rename/Overwrite mode or Hidden/Visible paths
+while the server is running.
