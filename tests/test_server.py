@@ -288,29 +288,6 @@ def test_run_shell_command_timeout_output_is_json_safe(tmp_path: Path) -> None:
     assert "Command timed out" in result["stderr"]
 
 
-def test_run_command_endpoint_returns_json_output(tmp_path: Path) -> None:
-    command = json.dumps({"command": "printf endpoint"})
-
-    with running_server(tmp_path) as (host, port):
-        connection = http.client.HTTPConnection(host, port)
-        connection.request(
-            "POST",
-            "/run-command",
-            body=command,
-            headers={
-                "Content-Type": "application/json",
-                "Content-Length": str(len(command)),
-            },
-        )
-        response = connection.getresponse()
-        assert response.status == 200
-        payload = json.loads(response.read().decode("utf-8"))
-        connection.close()
-
-    assert payload["returncode"] == 0
-    assert payload["stdout"] == "endpoint"
-
-
 def test_run_command_endpoint_is_always_available(tmp_path: Path) -> None:
     command = json.dumps({"command": "printf endpoint"})
 
