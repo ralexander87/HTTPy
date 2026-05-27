@@ -940,9 +940,9 @@ def build_index_html(
       font-size: 13px;
     }}
     .terminal {{
-      min-height: 220px;
+      height: 420px;
       display: grid;
-      grid-template-rows: auto minmax(120px, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr) auto;
       overflow: hidden;
     }}
     .terminal-head {{
@@ -956,8 +956,7 @@ def build_index_html(
     }}
     .terminal-output {{
       margin: 0;
-      min-height: 130px;
-      max-height: 260px;
+      min-height: 0;
       overflow: auto;
       padding: 12px;
       background: #10110f;
