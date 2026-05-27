@@ -851,7 +851,7 @@ def build_index_html(
     }}
     .workbench {{
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(320px, .9fr);
+      grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
       gap: 16px;
       align-items: stretch;
       margin-bottom: 24px;
