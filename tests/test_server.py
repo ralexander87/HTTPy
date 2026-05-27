@@ -83,9 +83,10 @@ def test_parse_duration_accepts_human_units() -> None:
     assert parse_duration("0") is None
 
 
-def test_startup_parser_leaves_browser_only_toggles_out_of_cli() -> None:
+def test_startup_parser_leaves_browser_only_settings_out_of_cli() -> None:
     help_text = build_parser().format_help()
 
+    assert "--upload-dir" not in help_text
     assert "--overwrite" not in help_text
     assert "--show-hidden" not in help_text
     assert "--max-size" in help_text

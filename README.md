@@ -18,7 +18,8 @@ python -m upload_server.server --host 0.0.0.0 --port 8000
 
 By default, uploaded files are stored in the directory where you start the server.
 The startup output prints local URLs you can open from this computer or another
-device on the same network.
+device on the same network. To share another folder, start the script from that
+folder.
 
 You can also run the standalone file without installing the package:
 
@@ -85,12 +86,6 @@ Limit browser CLI commands:
 
 ```bash
 python upload_server_standalone.py --command-timeout 30s
-```
-
-Choose a different directory:
-
-```bash
-python upload_server_standalone.py --upload-dir /path/to/share
 ```
 
 By default, dot-hidden paths are not listed or served, directory listings

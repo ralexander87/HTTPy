@@ -1973,7 +1973,6 @@ def make_handler(
 # Command-line entry point and startup messages.
 def print_useful_options() -> None:
     print("Useful options:")
-    print("  --upload-dir PATH   Share/save files in another directory")
     print("  --max-size 500MB    Reject uploads larger than this size")
     print("  --stop-after 30m    Stop automatically after a short session")
     print("  --command-timeout 30s  Stop long browser CLI commands")
@@ -1985,11 +1984,11 @@ def print_useful_options() -> None:
 def run_server(
     host: str,
     port: int,
-    upload_dir: Path,
     max_upload_size: int | None,
     stop_after: int | None,
     command_timeout: int | None,
 ) -> None:
+    upload_dir = Path(".").resolve()
     upload_dir.mkdir(parents=True, exist_ok=True)
     runtime_settings = RuntimeSettings(
         max_upload_size,
@@ -2030,12 +2029,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="0.0.0.0", help="Host/IP to bind to.")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on.")
     parser.add_argument(
-        "--upload-dir",
-        type=Path,
-        default=Path("."),
-        help="Directory where uploaded files are stored. Defaults to the current directory.",
-    )
-    parser.add_argument(
         "--max-size",
         type=parse_size,
         default=None,
@@ -2063,7 +2056,6 @@ def main(argv: list[str] | None = None) -> int:
         run_server(
             args.host,
             args.port,
-            args.upload_dir,
             args.max_size,
             args.stop_after,
             args.command_timeout,
