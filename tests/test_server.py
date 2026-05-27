@@ -449,7 +449,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="run-command"' in page
     assert 'id="clear-command"' in page
     assert 'id="terminal-output"' in page
-    assert "CLI enabled" in page
+    assert "CLI enabled" not in page
     assert "<span class=\"muted\">shell</span>" in page
     assert "$ pwd" in page
     assert "data-cli-enabled" not in page

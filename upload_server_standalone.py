@@ -1116,7 +1116,6 @@ def build_index_html(
         <span id="stat-overwrite" class="pill">{overwrite_text}</span>
         <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
         <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
-        <span class="pill">CLI enabled</span>
         <span class="pill">Hidden {hidden_text}</span>
       </div>
     </header>
@@ -1983,7 +1982,6 @@ def run_server(
         print(f"Upload limit: {format_size(max_upload_size)}")
         print(f"Existing files: {'overwrite' if overwrite_uploads else 'rename'}")
         print(f"Command timeout: {format_duration(command_timeout)}")
-        print("CLI: enabled")
         print(f"Hidden files: {'shown' if show_hidden else 'hidden'}")
         if stop_after is not None:
             print(f"Auto-stop: {format_duration(stop_after)}")
