@@ -439,14 +439,20 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "upload, download, delete" in page
     assert "Use only on trusted networks" in page
     assert "grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);" in page
+    assert "grid-template-rows: minmax(0, 1fr) auto;" in page
     assert "height: 420px;" in page
     assert "grid-template-rows: auto minmax(0, 1fr) auto;" in page
+    assert 'class="upload-commands"' in page
+    assert "examples-panel" not in page
     assert 'id="download-selected"' in page
     assert 'id="delete-selected"' in page
     assert 'id="refresh-files"' in page
     assert 'id="command-list-selected"' in page
     assert 'id="command-size-selected"' in page
     assert 'id="command-stat-selected"' in page
+    upload_start = page.index('id="drop-zone"')
+    terminal_start = page.index('class="panel terminal"')
+    assert upload_start < page.index('id="command-list-selected"') < terminal_start
     assert 'class="button secondary small run-command-preset"' in page
     assert 'data-command-target="command-list-selected"' in page
     assert 'copy-command' not in page

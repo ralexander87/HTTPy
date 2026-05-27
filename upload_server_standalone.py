@@ -850,10 +850,6 @@ def build_index_html(
       align-items: stretch;
       margin-bottom: 24px;
     }}
-    .examples-panel {{
-      padding: 12px;
-      margin-bottom: 24px;
-    }}
     .examples-grid {{
       display: grid;
       gap: 8px;
@@ -887,7 +883,8 @@ def build_index_html(
       border: 1px dashed var(--line);
       min-height: 160px;
       display: grid;
-      place-items: center;
+      grid-template-rows: minmax(0, 1fr) auto;
+      overflow: hidden;
       transition: border-color .15s ease, background .15s ease;
     }}
     .upload.dragover {{
@@ -898,8 +895,14 @@ def build_index_html(
       display: grid;
       gap: 12px;
       justify-items: center;
+      align-content: center;
+      min-height: 0;
       padding: 28px;
       text-align: center;
+    }}
+    .upload-commands {{
+      border-top: 1px solid var(--line);
+      padding: 12px;
     }}
     .muted {{ color: var(--muted); }}
     .button {{
@@ -1170,6 +1173,23 @@ def build_index_html(
           <progress id="progress" value="0" max="100" hidden></progress>
           <p id="status"></p>
         </div>
+        <div class="upload-commands">
+          <h2>Commands</h2>
+          <div class="examples-grid">
+            <div class="command-example">
+              <code id="command-list-selected"></code>
+              <button class="button secondary small run-command-preset" type="button" data-command-target="command-list-selected">Run</button>
+            </div>
+            <div class="command-example">
+              <code id="command-size-selected"></code>
+              <button class="button secondary small run-command-preset" type="button" data-command-target="command-size-selected">Run</button>
+            </div>
+            <div class="command-example">
+              <code id="command-stat-selected"></code>
+              <button class="button secondary small run-command-preset" type="button" data-command-target="command-stat-selected">Run</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="panel terminal">
@@ -1188,24 +1208,6 @@ def build_index_html(
         </form>
       </section>
     </div>
-
-    <section class="panel examples-panel">
-      <h2>Commands</h2>
-      <div class="examples-grid">
-        <div class="command-example">
-          <code id="command-list-selected"></code>
-          <button class="button secondary small run-command-preset" type="button" data-command-target="command-list-selected">Run</button>
-        </div>
-        <div class="command-example">
-          <code id="command-size-selected"></code>
-          <button class="button secondary small run-command-preset" type="button" data-command-target="command-size-selected">Run</button>
-        </div>
-        <div class="command-example">
-          <code id="command-stat-selected"></code>
-          <button class="button secondary small run-command-preset" type="button" data-command-target="command-stat-selected">Run</button>
-        </div>
-      </div>
-    </section>
 
     <section>
       <div class="file-head">
