@@ -39,6 +39,9 @@ htmlcov/
 uploads/*
 !uploads/.gitkeep
 
+# Temporary imported Git metadata
+GIT/
+
 # Editor and OS noise
 .DS_Store
 Thumbs.db
