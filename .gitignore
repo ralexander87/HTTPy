@@ -36,8 +36,6 @@ htmlcov/
 .upload_server.log
 .upload_server_commands.json
 .*upload_server_commands.json.*.tmp
-uploads/*
-!uploads/.gitkeep
 
 # Temporary imported Git metadata
 GIT/
