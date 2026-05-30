@@ -823,16 +823,16 @@ def build_index_html(
       gap: 6px;
     }}
     .pill-button {{
-      background: var(--accent);
-      color: #fff;
+      background: transparent;
+      color: var(--accent);
       font: inherit;
       cursor: pointer;
     }}
     .pill-button:hover,
     .pill-button[aria-pressed="true"] {{
-      border-color: var(--accent);
-      background: var(--accent-strong);
-      color: #fff;
+      border-color: var(--accent-strong);
+      background: transparent;
+      color: var(--accent-strong);
     }}
     .pill-button:disabled {{
       cursor: not-allowed;
@@ -930,14 +930,18 @@ def build_index_html(
       border: 1px solid var(--accent);
       border-radius: 6px;
       padding: 0 12px;
-      background: var(--accent);
-      color: #fff;
+      background: transparent;
+      color: var(--accent);
       font: inherit;
       font-weight: 650;
       text-decoration: none;
       cursor: pointer;
     }}
-    .button:hover {{ background: var(--accent-strong); }}
+    .button:hover {{
+      border-color: var(--accent-strong);
+      background: transparent;
+      color: var(--accent-strong);
+    }}
     .button:disabled {{
       border-color: var(--line);
       background: transparent;

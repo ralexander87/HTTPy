@@ -592,7 +592,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="settings-overwrite"' not in page
     assert 'class="toggle-group"' in page
     assert ".pill-button {" in page
-    assert "background: var(--accent);" in page
+    assert "background: var(--accent);" not in page
+    assert "background: var(--accent-strong);" not in page
+    assert ".button:hover {" in page
+    assert "border-color: var(--accent-strong);" in page
+    assert "color: var(--accent-strong);" in page
     assert 'id="stat-overwrite"' in page
     assert page.index('class="file-title"') < page.index('id="stat-overwrite"')
     assert 'data-enabled="false"' in page
