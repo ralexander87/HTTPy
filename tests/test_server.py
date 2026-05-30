@@ -469,6 +469,12 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "drop-zone" not in page
     assert ".upload.dragover" not in page
     assert "examples-panel" not in page
+    assert 'class="file-title"' in page
+    assert page.count('<span class="pill">2 files</span>') == 1
+    assert page.count('<span class="pill">8 B</span>') == 1
+    assert page.index('class="file-title"') < page.index('<span class="pill">2 files</span>')
+    assert page.index('<span class="pill">8 B</span>') < page.index('id="choose-files"')
+    assert page.index('<span id="stat-upload-limit"') < page.index('class="file-title"')
     assert 'id="file-picker"' in page
     assert 'id="choose-files"' in page
     assert 'id="download-selected"' in page

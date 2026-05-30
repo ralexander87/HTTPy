@@ -973,6 +973,12 @@ def build_index_html(
       gap: 12px;
       margin-bottom: 8px;
     }}
+    .file-title {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }}
     .file-actions {{
       display: flex;
       flex-wrap: wrap;
@@ -1091,6 +1097,7 @@ def build_index_html(
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
       header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
+      .file-title {{ align-items: flex-start; }}
       .file-actions {{ justify-content: flex-start; }}
       .stats {{ justify-content: flex-start; }}
       summary {{ grid-template-columns: 24px 20px minmax(0, 1fr); }}
@@ -1110,8 +1117,6 @@ def build_index_html(
         <div class="muted">{html.escape(str(root))}</div>
       </div>
       <div class="stats">
-        <span class="pill">{len(files)} files</span>
-        <span class="pill">{format_size(total_size)}</span>
         <span id="stat-upload-limit" class="pill">Limit {max_size_text}</span>
         <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
         <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
@@ -1204,7 +1209,11 @@ def build_index_html(
 
     <section>
       <div class="file-head">
-        <h2>Files</h2>
+        <div class="file-title">
+          <h2>Files</h2>
+          <span class="pill">{len(files)} files</span>
+          <span class="pill">{format_size(total_size)}</span>
+        </div>
         <div class="file-actions">
           <input id="file-picker" type="file" multiple hidden>
           <button id="choose-files" class="button" type="button">Choose Files</button>
