@@ -889,6 +889,12 @@ def build_index_html(
       padding: 0 10px;
       font-size: 13px;
     }}
+    .icon-button {{
+      width: 32px;
+      padding: 0;
+      font-size: 17px;
+      line-height: 1;
+    }}
     .terminal-grid {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1198,7 +1204,7 @@ def build_index_html(
             <button id="stat-overwrite" class="pill pill-button" type="button" data-enabled="{overwrite_pressed}" aria-pressed="{overwrite_pressed}">{overwrite_text}</button>
             <button id="stat-hidden" class="pill pill-button" type="button" data-visible="{hidden_pressed}" aria-pressed="{hidden_pressed}">{hidden_text}</button>
           </span>
-          <button id="refresh-files" class="button secondary small" type="button">Refresh</button>
+          <button id="refresh-files" class="button secondary small icon-button" type="button" aria-label="Refresh" title="Refresh"><span aria-hidden="true">&#x21bb;</span></button>
         </div>
         <div class="file-actions">
           <input id="file-picker" type="file" multiple hidden>

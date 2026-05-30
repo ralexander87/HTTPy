@@ -492,6 +492,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="download-selected"' in page
     assert 'id="delete-selected"' in page
     assert 'id="refresh-files"' in page
+    assert 'class="button secondary small icon-button"' in page
+    assert 'aria-label="Refresh"' in page
+    assert 'title="Refresh"' in page
+    assert "&#x21bb;" in page
+    assert ">Refresh</button>" not in page
     assert page.index('id="choose-files"') < page.index('id="download-selected"')
     assert page.index('class="panel file-control-panel"') < page.index('id="choose-files"')
     assert page.index('href="/download.zip"') < page.index('class="file-list-panel"')
