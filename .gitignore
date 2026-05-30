@@ -1,14 +1,46 @@
-.venv/
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Packaging and build output
 *.egg-info/
+build/
+dist/
+pip-wheel-metadata/
+
+# Test, coverage, and lint output
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.tox/
+.nox/
 .coverage
+.coverage.*
+htmlcov/
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Local server runtime state
+*.log
 .upload_server.log
 .upload_server_commands.json
 .*upload_server_commands.json.*.tmp
-build/
-dist/
-.env
 uploads/*
 !uploads/.gitkeep
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
