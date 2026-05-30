@@ -680,10 +680,7 @@ def build_index_html(
     root = upload_dir.resolve()
     files = iter_shared_files(root, show_hidden)
     file_tree = render_file_tree(root, files)
-    max_size_text = format_size(max_upload_size)
     overwrite_text = "Overwrite" if overwrite_uploads else "Rename"
-    command_timeout_text = format_duration(command_timeout)
-    stop_after_text = format_duration(stop_after)
     max_size_value = html.escape(setting_size_value(max_upload_size), quote=True)
     command_timeout_value = html.escape(setting_duration_value(command_timeout), quote=True)
     stop_after_value = html.escape(setting_duration_value(stop_after), quote=True)
@@ -747,14 +744,6 @@ def build_index_html(
     }}
     h1 {{ font-size: clamp(28px, 4vw, 42px); }}
     h2 {{ font-size: 18px; }}
-    .stats {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: flex-end;
-      color: var(--muted);
-      font-size: 13px;
-    }}
     .pill {{
       border: 1px solid var(--line);
       border-radius: 999px;
@@ -1106,7 +1095,6 @@ def build_index_html(
       header.top {{ align-items: stretch; flex-direction: column; }}
       .files-layout {{ grid-template-columns: minmax(0, 1fr); }}
       .file-title {{ align-items: flex-start; }}
-      .stats {{ justify-content: flex-start; }}
       summary {{ grid-template-columns: 24px 20px minmax(0, 1fr); }}
       .folder-count {{ grid-column: 3; }}
       .file-row {{ grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 6px; }}
@@ -1122,11 +1110,6 @@ def build_index_html(
       <div>
         <h1>File Share</h1>
         <div class="muted">{html.escape(str(root))}</div>
-      </div>
-      <div class="stats">
-        <span id="stat-upload-limit" class="pill">Limit {max_size_text}</span>
-        <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
-        <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
       </div>
     </header>
 
@@ -1258,11 +1241,8 @@ def build_index_html(
     const settingsStopAfter = document.getElementById("settings-stop-after");
     const settingsSave = document.getElementById("settings-save");
     const settingsStatus = document.getElementById("settings-status");
-    const statUploadLimit = document.getElementById("stat-upload-limit");
     const statOverwrite = document.getElementById("stat-overwrite");
     const statHidden = document.getElementById("stat-hidden");
-    const statCommandTimeout = document.getElementById("stat-command-timeout");
-    const statAutoStop = document.getElementById("stat-auto-stop");
     const terminalStates = Array.from(document.querySelectorAll(".terminal")).map(panel => ({{
       panel: panel,
       form: panel.querySelector(".command-form"),
@@ -1468,15 +1448,12 @@ def build_index_html(
       settingsMaxSize.value = settings.max_size || "";
       settingsCommandTimeout.value = settings.command_timeout || "";
       settingsStopAfter.value = settings.stop_after || "";
-      statUploadLimit.textContent = `Limit ${{settings.max_size_label}}`;
       statOverwrite.textContent = settings.overwrite_label;
       statOverwrite.dataset.enabled = String(Boolean(settings.overwrite));
       statOverwrite.setAttribute("aria-pressed", String(Boolean(settings.overwrite)));
       statHidden.textContent = settings.show_hidden_label;
       statHidden.dataset.visible = String(Boolean(settings.show_hidden));
       statHidden.setAttribute("aria-pressed", String(Boolean(settings.show_hidden)));
-      statCommandTimeout.textContent = `CLI ${{settings.command_timeout_label}}`;
-      statAutoStop.textContent = `Stop ${{settings.stop_after_label}}`;
     }}
 
     async function postSettings(updates) {{

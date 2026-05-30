@@ -480,7 +480,10 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert '<span class="pill">2 files</span>' not in page
     assert '<span class="pill">8 B</span>' not in page
     assert page.index('id="refresh-files"') < page.index('id="choose-files"')
-    assert page.index('<span id="stat-upload-limit"') < page.index('class="file-title"')
+    assert 'class="stats"' not in page
+    assert 'id="stat-upload-limit"' not in page
+    assert 'id="stat-command-timeout"' not in page
+    assert 'id="stat-auto-stop"' not in page
     assert 'id="file-picker"' in page
     assert 'id="choose-files"' in page
     assert 'id="download-selected"' in page
