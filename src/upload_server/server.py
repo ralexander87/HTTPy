@@ -907,6 +907,12 @@ def build_index_html(
       padding: 0 12px;
       border-bottom: 1px solid var(--line);
     }}
+    .terminal-title {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }}
     .terminal-output {{
       margin: 0;
       min-height: 0;
@@ -927,10 +933,10 @@ def build_index_html(
       border-top: 1px solid var(--line);
     }}
     .command-actions {{
-      grid-column: 2;
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
+      justify-content: flex-end;
     }}
     .prompt {{
       color: var(--muted);
@@ -1145,33 +1151,37 @@ def build_index_html(
       <div class="terminal-grid">
         <section class="panel terminal">
           <header class="terminal-head">
-            <h2>CLI 1</h2>
-            <span class="muted">shell</span>
+            <div class="terminal-title">
+              <h2>CLI 1</h2>
+              <span class="muted">shell</span>
+            </div>
+            <div class="command-actions">
+              <button id="run-command" class="button run-command" type="submit" form="command-form">Run</button>
+              <button id="clear-command" class="button secondary clear-command" type="button">Clear</button>
+            </div>
           </header>
           <pre id="terminal-output" class="terminal-output">{terminal_initial}</pre>
           <form id="command-form" class="command-form" onsubmit="return false">
             <span class="prompt">$</span>
             <input id="command-input" class="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
-            <div class="command-actions">
-              <button id="run-command" class="button run-command" type="submit">Run</button>
-              <button id="clear-command" class="button secondary clear-command" type="button">Clear</button>
-            </div>
           </form>
         </section>
 
         <section class="panel terminal">
           <header class="terminal-head">
-            <h2>CLI 2</h2>
-            <span class="muted">shell</span>
+            <div class="terminal-title">
+              <h2>CLI 2</h2>
+              <span class="muted">shell</span>
+            </div>
+            <div class="command-actions">
+              <button id="run-command-2" class="button run-command" type="submit" form="command-form-2">Run</button>
+              <button id="clear-command-2" class="button secondary clear-command" type="button">Clear</button>
+            </div>
           </header>
           <pre id="terminal-output-2" class="terminal-output">{terminal_initial}</pre>
           <form id="command-form-2" class="command-form" onsubmit="return false">
             <span class="prompt">$</span>
             <input id="command-input-2" class="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
-            <div class="command-actions">
-              <button id="run-command-2" class="button run-command" type="submit">Run</button>
-              <button id="clear-command-2" class="button secondary clear-command" type="button">Clear</button>
-            </div>
           </form>
         </section>
       </div>

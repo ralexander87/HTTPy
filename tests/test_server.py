@@ -522,6 +522,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'data-visible="false"' in page
     assert ">Hidden</button>" in page
     assert 'class="terminal-grid"' in page
+    assert 'class="terminal-title"' in page
     assert page.count('class="panel terminal"') == 2
     assert 'id="command-form"' in page
     assert 'id="command-form-2"' in page
@@ -530,6 +531,10 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="run-command-2"' in page
     assert 'id="clear-command"' in page
     assert 'id="clear-command-2"' in page
+    assert 'form="command-form"' in page
+    assert 'form="command-form-2"' in page
+    assert page.index('id="run-command"') < page.index('id="command-form"')
+    assert page.index('id="run-command-2"') < page.index('id="command-form-2"')
     assert 'id="terminal-output"' in page
     assert 'id="terminal-output-2"' in page
     assert ">CLI 1</h2>" in page
