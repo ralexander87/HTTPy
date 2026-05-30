@@ -38,7 +38,7 @@ Open the printed URL in a browser. The page includes:
 - selected file/folder ZIP downloads
 - selected file/folder delete
 - a refresh button for the file list
-- selected file/folder command presets for list, size, and stat
+- editable command presets that persist after server restart
 - two lightweight CLI panels that run commands in the shared directory
 - live settings for upload size, rename/overwrite mode, hidden visibility, command timeout, and auto-stop
 

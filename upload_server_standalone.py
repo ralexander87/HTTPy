@@ -20,6 +20,9 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 # Tunables and safety defaults used by both the package module and standalone copy.
 CHUNK_SIZE = 1024 * 1024
 MAX_COMMAND_BODY_SIZE = 64 * 1024
+COMMAND_PRESET_COUNT = 3
+COMMAND_PRESETS_FILE_NAME = ".upload_server_commands.json"
+MAX_COMMAND_PRESET_LENGTH = 2000
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 SIZE_UNITS = {
     "": 1,
@@ -115,6 +118,75 @@ def command_output_to_text(output: str | bytes | None) -> str:
 
     text = ANSI_ESCAPE_RE.sub("", text)
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def blank_command_presets() -> list[str]:
+    return [""] * COMMAND_PRESET_COUNT
+
+
+def normalize_command_presets(commands: object) -> list[str]:
+    if not isinstance(commands, list):
+        raise ValueError("Command presets must be a list")
+
+    presets = blank_command_presets()
+    for index, command in enumerate(commands[:COMMAND_PRESET_COUNT]):
+        if not isinstance(command, str):
+            raise ValueError("Command presets must be strings")
+
+        cleaned = command.strip()
+        if len(cleaned) > MAX_COMMAND_PRESET_LENGTH:
+            raise ValueError("Command preset is too long")
+
+        presets[index] = cleaned
+
+    return presets
+
+
+def command_presets_path(root_dir: Path) -> Path:
+    return root_dir.resolve() / COMMAND_PRESETS_FILE_NAME
+
+
+def load_command_presets(root_dir: Path) -> list[str]:
+    path = command_presets_path(root_dir)
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return blank_command_presets()
+
+    commands = payload.get("commands") if isinstance(payload, dict) else payload
+    try:
+        return normalize_command_presets(commands)
+    except ValueError:
+        return blank_command_presets()
+
+
+def save_command_presets(root_dir: Path, commands: object) -> list[str]:
+    presets = normalize_command_presets(commands)
+    path = command_presets_path(root_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            json.dump({"commands": presets}, temp_file, indent=2)
+            temp_file.write("\n")
+            temp_path = Path(temp_file.name)
+
+        temp_path.replace(path)
+    except OSError:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+    return presets
 
 
 def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
@@ -688,6 +760,9 @@ def build_index_html(
     hidden_text = "Visible" if show_hidden else "Hidden"
     hidden_pressed = str(show_hidden).lower()
     terminal_initial = f"$ pwd\n{html.escape(str(root))}"
+    command_preset_values = [
+        html.escape(command, quote=True) for command in load_command_presets(root)
+    ]
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -836,18 +911,16 @@ def build_index_html(
       gap: 8px;
       align-items: center;
     }}
-    .command-example code {{
+    .command-preset-input {{
+      min-width: 0;
+      width: 100%;
       min-height: 36px;
-      display: flex;
-      align-items: center;
-      overflow: auto;
       border: 1px solid var(--line);
       border-radius: 6px;
       padding: 0 10px;
       background: transparent;
       color: var(--text);
       font: 13px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-      white-space: nowrap;
     }}
     .panel {{
       background: var(--panel);
@@ -1148,15 +1221,15 @@ def build_index_html(
       <section class="panel command-presets">
         <div class="examples-grid">
           <div class="command-example">
-            <code id="command-list-selected"></code>
+            <input id="command-list-selected" class="command-preset-input" type="text" value="{command_preset_values[0]}" autocomplete="off" spellcheck="false" aria-label="Command preset 1">
             <button class="button secondary small run-command-preset" type="button" data-command-target="command-list-selected">Run</button>
           </div>
           <div class="command-example">
-            <code id="command-size-selected"></code>
+            <input id="command-size-selected" class="command-preset-input" type="text" value="{command_preset_values[1]}" autocomplete="off" spellcheck="false" aria-label="Command preset 2">
             <button class="button secondary small run-command-preset" type="button" data-command-target="command-size-selected">Run</button>
           </div>
           <div class="command-example">
-            <code id="command-stat-selected"></code>
+            <input id="command-stat-selected" class="command-preset-input" type="text" value="{command_preset_values[2]}" autocomplete="off" spellcheck="false" aria-label="Command preset 3">
             <button class="button secondary small run-command-preset" type="button" data-command-target="command-stat-selected">Run</button>
           </div>
         </div>
@@ -1238,9 +1311,7 @@ def build_index_html(
     const selectedDownload = document.getElementById("download-selected");
     const deleteSelected = document.getElementById("delete-selected");
     const refreshFiles = document.getElementById("refresh-files");
-    const commandListSelected = document.getElementById("command-list-selected");
-    const commandSizeSelected = document.getElementById("command-size-selected");
-    const commandStatSelected = document.getElementById("command-stat-selected");
+    const commandPresetInputs = Array.from(document.querySelectorAll(".command-preset-input"));
     const runPresetButtons = Array.from(document.querySelectorAll(".run-command-preset"));
     const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
     const settingsForm = document.getElementById("settings-form");
@@ -1261,6 +1332,7 @@ def build_index_html(
       running: false
     }}));
     let activeTerminal = terminalStates[0];
+    let commandPresetSaveTimer = null;
 
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
@@ -1270,7 +1342,6 @@ def build_index_html(
     settingsForm.addEventListener("submit", saveSettings);
     statOverwrite.addEventListener("click", toggleOverwriteMode);
     statHidden.addEventListener("click", toggleHiddenVisibility);
-    updateCommandPresets();
 
     for (const terminal of terminalStates) {{
       terminal.panel.addEventListener("pointerdown", () => setActiveTerminal(terminal));
@@ -1283,6 +1354,11 @@ def build_index_html(
       button.addEventListener("click", runCommandPreset);
     }}
 
+    for (const input of commandPresetInputs) {{
+      input.addEventListener("input", scheduleSaveCommandPresets);
+      input.addEventListener("change", saveCommandPresets);
+    }}
+
     for (const check of treeChecks) {{
       check.addEventListener("click", event => event.stopPropagation());
       check.addEventListener("change", () => {{
@@ -1292,7 +1368,6 @@ def build_index_html(
 
         updateAncestorChecks(check);
         updateSelectedDownload();
-        updateCommandPresets();
       }});
     }}
 
@@ -1401,27 +1476,43 @@ def build_index_html(
       }}
     }}
 
-    function shellQuote(path) {{
-      return "'" + path.split("'").join("'\\\"'\\\"'") + "'";
+    function commandPresetValues() {{
+      return commandPresetInputs.map(input => input.value.trim());
     }}
 
-    function selectedCommandArgs() {{
-      const paths = selectedPaths();
-      if (!paths.length) return ".";
-      return paths.map(shellQuote).join(" ");
+    function scheduleSaveCommandPresets() {{
+      window.clearTimeout(commandPresetSaveTimer);
+      commandPresetSaveTimer = window.setTimeout(saveCommandPresets, 400);
     }}
 
-    function updateCommandPresets() {{
-      const args = selectedCommandArgs();
-      commandListSelected.textContent = `ls -lah -- ${{args}}`;
-      commandSizeSelected.textContent = `du -sh -- ${{args}}`;
-      commandStatSelected.textContent = `stat -- ${{args}}`;
+    async function saveCommandPresets() {{
+      window.clearTimeout(commandPresetSaveTimer);
+      commandPresetSaveTimer = null;
+
+      try {{
+        const response = await fetch("/command-presets", {{
+          method: "POST",
+          headers: {{
+            "Content-Type": "application/json"
+          }},
+          body: JSON.stringify({{ commands: commandPresetValues() }})
+        }});
+        const result = await response.json();
+
+        if (!response.ok) {{
+          console.warn(result.error || "Command preset save failed");
+        }}
+      }} catch (error) {{
+        console.warn(error.message);
+      }}
     }}
 
     async function runCommandPreset(event) {{
       const targetId = event.currentTarget.dataset.commandTarget;
       const target = document.getElementById(targetId);
-      await executeCommand(target ? target.textContent.trim() : "", activeTerminal);
+      const command = target && "value" in target ? target.value.trim() : "";
+      await saveCommandPresets();
+      await executeCommand(command, activeTerminal);
     }}
 
     function setActiveTerminal(terminal) {{
@@ -1747,6 +1838,10 @@ class UploadHandler(SimpleHTTPRequestHandler):
             self.update_settings()
             return
 
+        if path == "/command-presets":
+            self.update_command_presets()
+            return
+
         if path == "/delete":
             self.delete_selected()
             return
@@ -1829,6 +1924,41 @@ class UploadHandler(SimpleHTTPRequestHandler):
             f"stop {settings_payload['stop_after_label']}, "
             f"{settings_payload['overwrite_label']})"
         )
+
+    def update_command_presets(self) -> None:
+        content_length = self.headers.get("Content-Length")
+        if content_length is None:
+            self.send_json({"error": "Content-Length header is required"}, status=411)
+            return
+
+        try:
+            body_size = int(content_length)
+        except ValueError:
+            self.send_json({"error": "Invalid Content-Length header"}, status=400)
+            return
+
+        if body_size < 0 or body_size > MAX_COMMAND_BODY_SIZE:
+            self.send_json({"error": "Command presets request is too large"}, status=413)
+            return
+
+        try:
+            payload = json.loads(self.rfile.read(body_size).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, status=400)
+            return
+
+        commands = payload.get("commands") if isinstance(payload, dict) else None
+        try:
+            presets = save_command_presets(self.upload_dir, commands)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, status=400)
+            return
+        except OSError as exc:
+            self.send_json({"error": f"Could not save command presets: {exc}"}, status=500)
+            return
+
+        self.send_json({"commands": presets})
+        self.log_event("Updated command presets")
 
     def delete_selected(self) -> None:
         content_length = self.headers.get("Content-Length")

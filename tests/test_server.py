@@ -23,6 +23,8 @@ from upload_server.server import (
     resolve_request_path,
     resolve_upload_path,
     run_shell_command,
+    load_command_presets,
+    save_command_presets,
 )
 
 
@@ -329,6 +331,49 @@ def test_run_command_endpoint_is_always_available(tmp_path: Path) -> None:
     assert payload["stdout"] == "endpoint"
 
 
+def test_command_presets_default_empty_and_persist(tmp_path: Path) -> None:
+    assert load_command_presets(tmp_path) == ["", "", ""]
+
+    saved = save_command_presets(tmp_path, ["pwd", "ls -lah", "whoami"])
+
+    assert saved == ["pwd", "ls -lah", "whoami"]
+    assert load_command_presets(tmp_path) == saved
+    assert (tmp_path / ".upload_server_commands.json").exists()
+
+
+def test_command_presets_endpoint_persists_commands(tmp_path: Path) -> None:
+    request_body = json.dumps({"commands": ["pwd", "ls -lah", "whoami"]})
+
+    with running_server(tmp_path) as (host, port):
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/command-presets",
+            body=request_body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(request_body)),
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+
+    assert payload == {"commands": ["pwd", "ls -lah", "whoami"]}
+    assert load_command_presets(tmp_path) == ["pwd", "ls -lah", "whoami"]
+
+
+def test_index_loads_saved_command_presets(tmp_path: Path) -> None:
+    save_command_presets(tmp_path, ['echo "one"', "pwd", "whoami"])
+
+    page = build_index_html(tmp_path, max_upload_size=None, overwrite_uploads=False).decode()
+
+    assert 'value="echo &quot;one&quot;"' in page
+    assert 'value="pwd"' in page
+    assert 'value="whoami"' in page
+
+
 def test_settings_endpoint_updates_upload_limit_without_restart(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("secret", encoding="utf-8")
     settings = json.dumps(
@@ -508,12 +553,33 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="command-list-selected"' in page
     assert 'id="command-size-selected"' in page
     assert 'id="command-stat-selected"' in page
+    assert (
+        'id="command-list-selected" class="command-preset-input" type="text" value=""'
+        in page
+    )
+    assert (
+        'id="command-size-selected" class="command-preset-input" type="text" value=""'
+        in page
+    )
+    assert (
+        'id="command-stat-selected" class="command-preset-input" type="text" value=""'
+        in page
+    )
+    assert '<code id="command-list-selected"' not in page
+    assert 'class="command-preset-input"' in page
+    assert 'value="ls -lah' not in page
+    assert 'value="du -sh' not in page
+    assert 'value="stat --' not in page
     assert "<h2>Commands</h2>" not in page
     command_panel_start = page.index('class="panel command-presets"')
     terminal_start = page.index('class="terminal-grid"')
     assert command_panel_start < page.index('id="command-list-selected"') < terminal_start
     assert 'class="button secondary small run-command-preset"' in page
     assert 'data-command-target="command-list-selected"' in page
+    assert 'const commandPresetInputs = Array.from(document.querySelectorAll(".command-preset-input"));' in page
+    assert 'input.addEventListener("input", scheduleSaveCommandPresets);' in page
+    assert 'async function saveCommandPresets()' in page
+    assert 'fetch("/command-presets"' in page
     assert 'copy-command' not in page
     assert 'id="settings-form"' in page
     assert 'id="settings-max-size"' in page
@@ -564,11 +630,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'async function toggleOverwriteMode()' in page
     assert 'async function toggleHiddenVisibility()' in page
     assert 'show_hidden: statHidden.dataset.visible !== "true"' in page
-    assert 'function shellQuote(path)' in page
-    assert 'path.split("\'").join("\'\\"\'\\"\'")' in page
-    assert 'commandListSelected.textContent = `ls -lah -- ${args}`;' in page
-    assert 'commandSizeSelected.textContent = `du -sh -- ${args}`;' in page
-    assert 'commandStatSelected.textContent = `stat -- ${args}`;' in page
+    assert 'function shellQuote(path)' not in page
+    assert 'commandListSelected.textContent' not in page
+    assert 'commandSizeSelected.textContent' not in page
+    assert 'commandStatSelected.textContent' not in page
+    assert 'const command = target && "value" in target ? target.value.trim() : "";' in page
     assert 'async function executeCommand(command, terminal = activeTerminal)' in page
     assert 'terminal.clearButton.addEventListener("click", () => runClearCommand(terminal));' in page
     assert 'async function runClearCommand(terminal = activeTerminal)' in page
