@@ -1221,13 +1221,13 @@ def build_index_html(
           <h2>Files</h2>
           <span class="pill">{len(files)} files</span>
           <span class="pill">{format_size(total_size)}</span>
+          <button id="refresh-files" class="button secondary small" type="button">Refresh</button>
         </div>
         <div class="file-actions">
           <input id="file-picker" type="file" multiple hidden>
           <button id="choose-files" class="button" type="button">Choose Files</button>
           <button id="download-selected" class="button" type="button" disabled>Download Selected</button>
           <button id="delete-selected" class="button secondary" type="button" disabled>Delete Selected</button>
-          <button id="refresh-files" class="button secondary" type="button">Refresh</button>
           <a class="button secondary" href="/download.zip">Download ZIP</a>
         </div>
         <div class="upload-feedback">
