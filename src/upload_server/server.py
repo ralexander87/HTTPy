@@ -980,10 +980,13 @@ def build_index_html(
     }}
     .file-actions {{
       display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
     }}
     .file-actions .button {{
+      min-width: 0;
       width: 100%;
+      white-space: normal;
     }}
     .upload-feedback {{
       display: grid;
@@ -1208,10 +1211,10 @@ def build_index_html(
         </div>
         <div class="file-actions">
           <input id="file-picker" type="file" multiple hidden>
-          <button id="choose-files" class="button" type="button">Choose Files</button>
           <button id="download-selected" class="button" type="button" disabled>Download Selected</button>
-          <button id="delete-selected" class="button secondary" type="button" disabled>Delete Selected</button>
+          <button id="choose-files" class="button" type="button">Choose Files</button>
           <a class="button secondary" href="/download.zip">Download ZIP</a>
+          <button id="delete-selected" class="button secondary" type="button" disabled>Delete Selected</button>
         </div>
         <div class="upload-feedback">
           <progress id="progress" value="0" max="100" hidden></progress>

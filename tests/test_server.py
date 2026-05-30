@@ -477,7 +477,9 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'class="file-list-panel"' in page
     assert ".file-actions {" in page
     assert "display: grid;" in page
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in page
     assert ".file-actions .button {" in page
+    assert "min-width: 0;" in page
     assert "width: 100%;" in page
     assert 'class="file-title"' in page
     assert '<span class="pill">2 files</span>' not in page
@@ -497,7 +499,9 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'title="Refresh"' in page
     assert "&#x21bb;" in page
     assert ">Refresh</button>" not in page
-    assert page.index('id="choose-files"') < page.index('id="download-selected"')
+    assert page.index('id="download-selected"') < page.index('id="choose-files"')
+    assert page.index('id="choose-files"') < page.index('href="/download.zip"')
+    assert page.index('href="/download.zip"') < page.index('id="delete-selected"')
     assert page.index('class="panel file-control-panel"') < page.index('id="choose-files"')
     assert page.index('href="/download.zip"') < page.index('class="file-list-panel"')
     assert page.index('class="file-list-panel"') < page.index('<details class="folder">')
