@@ -477,10 +477,8 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert ".file-actions .button {" in page
     assert "width: 100%;" in page
     assert 'class="file-title"' in page
-    assert page.count('<span class="pill">2 files</span>') == 1
-    assert page.count('<span class="pill">8 B</span>') == 1
-    assert page.index('class="file-title"') < page.index('<span class="pill">2 files</span>')
-    assert page.index('<span class="pill">8 B</span>') < page.index('id="refresh-files"')
+    assert '<span class="pill">2 files</span>' not in page
+    assert '<span class="pill">8 B</span>' not in page
     assert page.index('id="refresh-files"') < page.index('id="choose-files"')
     assert page.index('<span id="stat-upload-limit"') < page.index('class="file-title"')
     assert 'id="file-picker"' in page
@@ -510,9 +508,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert ".pill-button {" in page
     assert "background: var(--accent);" in page
     assert 'id="stat-overwrite"' in page
+    assert page.index('class="file-title"') < page.index('id="stat-overwrite"')
     assert 'data-enabled="false"' in page
     assert ">Rename</button>" in page
     assert 'id="stat-hidden"' in page
+    assert page.index('id="stat-hidden"') < page.index('id="refresh-files"')
     assert 'data-visible="false"' in page
     assert ">Hidden</button>" in page
     assert 'class="terminal-grid"' in page

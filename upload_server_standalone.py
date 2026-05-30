@@ -679,7 +679,6 @@ def build_index_html(
     """Build the complete browser UI as one self-contained HTML document."""
     root = upload_dir.resolve()
     files = iter_shared_files(root, show_hidden)
-    total_size = sum(path.stat().st_size for path in files)
     file_tree = render_file_tree(root, files)
     max_size_text = format_size(max_upload_size)
     overwrite_text = "Overwrite" if overwrite_uploads else "Rename"
@@ -1128,10 +1127,6 @@ def build_index_html(
         <span id="stat-upload-limit" class="pill">Limit {max_size_text}</span>
         <span id="stat-command-timeout" class="pill">CLI {command_timeout_text}</span>
         <span id="stat-auto-stop" class="pill">Stop {stop_after_text}</span>
-        <span class="toggle-group">
-          <button id="stat-overwrite" class="pill pill-button" type="button" data-enabled="{overwrite_pressed}" aria-pressed="{overwrite_pressed}">{overwrite_text}</button>
-          <button id="stat-hidden" class="pill pill-button" type="button" data-visible="{hidden_pressed}" aria-pressed="{hidden_pressed}">{hidden_text}</button>
-        </span>
       </div>
     </header>
 
@@ -1219,8 +1214,10 @@ def build_index_html(
       <aside class="panel file-control-panel">
         <div class="file-title">
           <h2>Files</h2>
-          <span class="pill">{len(files)} files</span>
-          <span class="pill">{format_size(total_size)}</span>
+          <span class="toggle-group">
+            <button id="stat-overwrite" class="pill pill-button" type="button" data-enabled="{overwrite_pressed}" aria-pressed="{overwrite_pressed}">{overwrite_text}</button>
+            <button id="stat-hidden" class="pill pill-button" type="button" data-visible="{hidden_pressed}" aria-pressed="{hidden_pressed}">{hidden_text}</button>
+          </span>
           <button id="refresh-files" class="button secondary small" type="button">Refresh</button>
         </div>
         <div class="file-actions">
