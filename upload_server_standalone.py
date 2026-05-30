@@ -788,7 +788,9 @@ def build_index_html(
     }}
     .setting-field {{
       display: grid;
-      gap: 4px;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
       color: var(--muted);
       font-size: 12px;
       font-weight: 700;
@@ -1090,6 +1092,7 @@ def build_index_html(
       .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
+      .setting-field {{ grid-template-columns: minmax(110px, max-content) minmax(0, 1fr); }}
       .files-layout {{ grid-template-columns: minmax(0, 1fr); }}
       .file-title {{ align-items: flex-start; }}
       summary {{ grid-template-columns: 24px 20px minmax(0, 1fr); }}
