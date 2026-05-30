@@ -32,7 +32,6 @@ python upload_server_standalone.py
 Open the printed URL in a browser. The page includes:
 
 - file list
-- drag-and-drop upload
 - file picker upload
 - download links
 - `Download ZIP` for the whole shared directory

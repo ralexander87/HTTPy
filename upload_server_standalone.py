@@ -869,29 +869,7 @@ def build_index_html(
       border: 1px solid var(--line);
       border-radius: 8px;
     }}
-    .upload {{
-      border: 1px dashed var(--line);
-      min-height: 160px;
-      display: grid;
-      grid-template-rows: minmax(0, 1fr) auto;
-      overflow: hidden;
-      transition: border-color .15s ease, background .15s ease;
-    }}
-    .upload.dragover {{
-      border-color: var(--accent);
-      background: color-mix(in srgb, var(--accent) 10%, var(--panel));
-    }}
-    .upload-inner {{
-      display: grid;
-      gap: 12px;
-      justify-items: center;
-      align-content: center;
-      min-height: 0;
-      padding: 28px;
-      text-align: center;
-    }}
-    .upload-commands {{
-      border-top: 1px solid var(--line);
+    .command-presets {{
       padding: 12px;
     }}
     .muted {{ color: var(--muted); }}
@@ -993,6 +971,11 @@ def build_index_html(
       gap: 8px;
       justify-content: flex-end;
     }}
+    .upload-feedback {{
+      display: grid;
+      gap: 6px;
+      margin-bottom: 8px;
+    }}
     .file-tree {{
       background: var(--panel);
       border: 1px solid var(--line);
@@ -1082,6 +1065,7 @@ def build_index_html(
       margin: 0;
       color: var(--muted);
     }}
+    #status:empty {{ display: none; }}
     #status.error {{ color: var(--warn); }}
     .empty {{
       color: var(--muted);
@@ -1155,28 +1139,20 @@ def build_index_html(
     </section>
 
     <div class="workbench">
-      <section id="drop-zone" class="panel upload">
-        <div class="upload-inner">
-          <input id="file-picker" type="file" multiple hidden>
-          <div class="muted">Drop files here</div>
-          <progress id="progress" value="0" max="100" hidden></progress>
-          <p id="status"></p>
-        </div>
-        <div class="upload-commands">
-          <h2>Commands</h2>
-          <div class="examples-grid">
-            <div class="command-example">
-              <code id="command-list-selected"></code>
-              <button class="button secondary small run-command-preset" type="button" data-command-target="command-list-selected">Run</button>
-            </div>
-            <div class="command-example">
-              <code id="command-size-selected"></code>
-              <button class="button secondary small run-command-preset" type="button" data-command-target="command-size-selected">Run</button>
-            </div>
-            <div class="command-example">
-              <code id="command-stat-selected"></code>
-              <button class="button secondary small run-command-preset" type="button" data-command-target="command-stat-selected">Run</button>
-            </div>
+      <section class="panel command-presets">
+        <h2>Commands</h2>
+        <div class="examples-grid">
+          <div class="command-example">
+            <code id="command-list-selected"></code>
+            <button class="button secondary small run-command-preset" type="button" data-command-target="command-list-selected">Run</button>
+          </div>
+          <div class="command-example">
+            <code id="command-size-selected"></code>
+            <button class="button secondary small run-command-preset" type="button" data-command-target="command-size-selected">Run</button>
+          </div>
+          <div class="command-example">
+            <code id="command-stat-selected"></code>
+            <button class="button secondary small run-command-preset" type="button" data-command-target="command-stat-selected">Run</button>
           </div>
         </div>
       </section>
@@ -1202,6 +1178,7 @@ def build_index_html(
       <div class="file-head">
         <h2>Files</h2>
         <div class="file-actions">
+          <input id="file-picker" type="file" multiple hidden>
           <button id="choose-files" class="button" type="button">Choose Files</button>
           <button id="download-selected" class="button" type="button" disabled>Download Selected</button>
           <button id="delete-selected" class="button secondary" type="button" disabled>Delete Selected</button>
@@ -1209,12 +1186,15 @@ def build_index_html(
           <a class="button secondary" href="/download.zip">Download ZIP</a>
         </div>
       </div>
+      <div class="upload-feedback">
+        <progress id="progress" value="0" max="100" hidden></progress>
+        <p id="status"></p>
+      </div>
       {file_tree}
     </section>
   </main>
 
   <script>
-    const zone = document.getElementById("drop-zone");
     const picker = document.getElementById("file-picker");
     const choose = document.getElementById("choose-files");
     const progress = document.getElementById("progress");
@@ -1273,22 +1253,6 @@ def build_index_html(
         updateCommandPresets();
       }});
     }}
-
-    for (const eventName of ["dragenter", "dragover"]) {{
-      zone.addEventListener(eventName, event => {{
-        event.preventDefault();
-        zone.classList.add("dragover");
-      }});
-    }}
-
-    for (const eventName of ["dragleave", "drop"]) {{
-      zone.addEventListener(eventName, event => {{
-        event.preventDefault();
-        zone.classList.remove("dragover");
-      }});
-    }}
-
-    zone.addEventListener("drop", event => uploadFiles(event.dataTransfer.files));
 
     function setDescendantChecks(folderCheck) {{
       const folder = folderCheck.closest("details.folder");
