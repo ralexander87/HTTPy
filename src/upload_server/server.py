@@ -966,12 +966,17 @@ def build_index_html(
       color: var(--text);
       font: 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
     }}
-    .file-head {{
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .files-layout {{
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+      gap: 16px;
+      align-items: start;
+    }}
+    .file-control-panel {{
+      display: grid;
       gap: 12px;
-      margin-bottom: 8px;
+      align-content: start;
+      padding: 12px;
     }}
     .file-title {{
       display: flex;
@@ -980,15 +985,18 @@ def build_index_html(
       gap: 8px;
     }}
     .file-actions {{
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
       gap: 8px;
-      justify-content: flex-end;
+    }}
+    .file-actions .button {{
+      width: 100%;
     }}
     .upload-feedback {{
       display: grid;
       gap: 6px;
-      margin-bottom: 8px;
+    }}
+    .file-list-panel {{
+      min-width: 0;
     }}
     .file-tree {{
       background: var(--panel);
@@ -1096,9 +1104,9 @@ def build_index_html(
       .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
-      header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
+      header.top {{ align-items: stretch; flex-direction: column; }}
+      .files-layout {{ grid-template-columns: minmax(0, 1fr); }}
       .file-title {{ align-items: flex-start; }}
-      .file-actions {{ justify-content: flex-start; }}
       .stats {{ justify-content: flex-start; }}
       summary {{ grid-template-columns: 24px 20px minmax(0, 1fr); }}
       .folder-count {{ grid-column: 3; }}
@@ -1207,8 +1215,8 @@ def build_index_html(
       </div>
     </div>
 
-    <section>
-      <div class="file-head">
+    <section class="files-layout">
+      <aside class="panel file-control-panel">
         <div class="file-title">
           <h2>Files</h2>
           <span class="pill">{len(files)} files</span>
@@ -1222,12 +1230,14 @@ def build_index_html(
           <button id="refresh-files" class="button secondary" type="button">Refresh</button>
           <a class="button secondary" href="/download.zip">Download ZIP</a>
         </div>
+        <div class="upload-feedback">
+          <progress id="progress" value="0" max="100" hidden></progress>
+          <p id="status"></p>
+        </div>
+      </aside>
+      <div class="file-list-panel">
+        {file_tree}
       </div>
-      <div class="upload-feedback">
-        <progress id="progress" value="0" max="100" hidden></progress>
-        <p id="status"></p>
-      </div>
-      {file_tree}
     </section>
   </main>
 

@@ -457,7 +457,6 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "upload, download, delete" in page
     assert "Use only on trusted networks" in page
     assert "width: min(1280px, calc(100% - 32px));" in page
-    assert "grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);" not in page
     assert ".workbench {" in page
     assert "grid-template-columns: minmax(0, 1fr);" in page
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in page
@@ -469,6 +468,14 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "drop-zone" not in page
     assert ".upload.dragover" not in page
     assert "examples-panel" not in page
+    assert 'class="files-layout"' in page
+    assert "grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);" in page
+    assert 'class="panel file-control-panel"' in page
+    assert 'class="file-list-panel"' in page
+    assert ".file-actions {" in page
+    assert "display: grid;" in page
+    assert ".file-actions .button {" in page
+    assert "width: 100%;" in page
     assert 'class="file-title"' in page
     assert page.count('<span class="pill">2 files</span>') == 1
     assert page.count('<span class="pill">8 B</span>') == 1
@@ -481,6 +488,10 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="delete-selected"' in page
     assert 'id="refresh-files"' in page
     assert page.index('id="choose-files"') < page.index('id="download-selected"')
+    assert page.index('class="panel file-control-panel"') < page.index('id="choose-files"')
+    assert page.index('id="choose-files"') < page.index('id="refresh-files"')
+    assert page.index('href="/download.zip"') < page.index('class="file-list-panel"')
+    assert page.index('class="file-list-panel"') < page.index('<details class="folder">')
     assert 'id="command-list-selected"' in page
     assert 'id="command-size-selected"' in page
     assert 'id="command-stat-selected"' in page
