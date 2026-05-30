@@ -23,6 +23,7 @@ MAX_COMMAND_BODY_SIZE = 64 * 1024
 COMMAND_PRESET_COUNT = 3
 COMMAND_PRESETS_FILE_NAME = ".upload_server_commands.json"
 MAX_COMMAND_PRESET_LENGTH = 2000
+LOG_FILE_NAME = ".upload_server.log"
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 SIZE_UNITS = {
     "": 1,
@@ -118,6 +119,48 @@ def command_output_to_text(output: str | bytes | None) -> str:
 
     text = ANSI_ESCAPE_RE.sub("", text)
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def sanitize_log_message(message: object) -> str:
+    return str(message).replace("\r", "\\r").replace("\n", "\\n")
+
+
+def summarize_items(items: list[str], limit: int = 6) -> str:
+    if not items:
+        return "none"
+
+    shown = ", ".join(items[:limit])
+    if len(items) > limit:
+        shown += f", ... +{len(items) - limit} more"
+    return shown
+
+
+def log_file_path(root_dir: Path) -> Path:
+    return root_dir.resolve() / LOG_FILE_NAME
+
+
+class EventLogger:
+    """Append important server events to a local log file and the terminal."""
+
+    def __init__(self, path: Path):
+        self.path = path.resolve()
+        self.lock = threading.Lock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.touch(exist_ok=True)
+
+    def write(self, message: object, client_ip: str | None = None) -> None:
+        message_text = sanitize_log_message(message)
+        address = f" {client_ip}" if client_ip else ""
+        console_line = f"[{time.strftime('%H:%M:%S')}]{address} {message_text}"
+        file_line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}]{address} {message_text}"
+
+        print(console_line)
+        try:
+            with self.lock:
+                with self.path.open("a", encoding="utf-8") as log_file:
+                    log_file.write(file_line + "\n")
+        except OSError as exc:
+            print(f"[{time.strftime('%H:%M:%S')}] Could not write log file {self.path}: {exc}")
 
 
 def blank_command_presets() -> list[str]:
@@ -1696,6 +1739,25 @@ class UploadHandler(SimpleHTTPRequestHandler):
     server_version = "UploadHTTP/0.2"
     upload_dir: Path
     runtime_settings: RuntimeSettings
+    event_logger: EventLogger
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self.last_response_code = code
+        super().send_response(code, message)
+
+    def send_error(
+        self,
+        code: int,
+        message: str | None = None,
+        explain: str | None = None,
+    ) -> None:
+        if code >= 400:
+            response_message = message or self.responses.get(code, ("", ""))[0]
+            self.log_event(f"Rejected {self.command} {self.path} ({code} {response_message})")
+        super().send_error(code, message, explain)
+
+    def was_response_successful(self) -> bool:
+        return 200 <= getattr(self, "last_response_code", 0) < 400
 
     def do_GET(self) -> None:
         request_url = urlsplit(self.path)
@@ -1738,7 +1800,7 @@ class UploadHandler(SimpleHTTPRequestHandler):
 
         super().do_GET()
 
-        if requested_path and requested_path.is_file():
+        if requested_path and requested_path.is_file() and self.was_response_successful():
             relative_path = requested_path.relative_to(self.upload_dir.resolve()).as_posix()
             self.log_event(
                 f"Downloaded {relative_path} ({format_size(requested_path.stat().st_size)})"
@@ -1907,7 +1969,8 @@ class UploadHandler(SimpleHTTPRequestHandler):
             f"(limit {settings_payload['max_size_label']}, "
             f"CLI {settings_payload['command_timeout_label']}, "
             f"stop {settings_payload['stop_after_label']}, "
-            f"{settings_payload['overwrite_label']})"
+            f"{settings_payload['overwrite_label']}, "
+            f"{settings_payload['show_hidden_label']})"
         )
 
     def update_command_presets(self) -> None:
@@ -1991,10 +2054,15 @@ class UploadHandler(SimpleHTTPRequestHandler):
         self.send_json(result)
         self.log_event(
             f"Deleted selected paths "
-            f"({result['deleted_files']} files, {result['deleted_dirs']} folders)"
+            f"({result['deleted_files']} files, {result['deleted_dirs']} folders; "
+            f"requested: {summarize_items(paths)})"
         )
 
     def send_json(self, payload: dict, status: int = 200) -> None:
+        if status >= 400:
+            error = payload.get("error", "request failed")
+            self.log_event(f"Rejected {self.command} {self.path} ({status} {error})")
+
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -2054,12 +2122,17 @@ class UploadHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             shutil.copyfileobj(archive, self.wfile)
 
-        zip_kind = "selected ZIP" if selected_paths else "ZIP"
-        self.log_event(f"Downloaded {zip_kind} ({len(files)} files, {format_size(total_size)})")
+        if selected_paths:
+            self.log_event(
+                f"Downloaded selected ZIP "
+                f"({len(files)} files, {format_size(total_size)}; "
+                f"requested: {summarize_items(selected_paths)})"
+            )
+        else:
+            self.log_event(f"Downloaded ZIP ({len(files)} files, {format_size(total_size)})")
 
     def log_event(self, message: str) -> None:
-        timestamp = time.strftime("%H:%M:%S")
-        print(f"[{timestamp}] {self.client_address[0]} {message}")
+        self.event_logger.write(message, self.client_address[0])
 
     def log_message(self, format: str, *args) -> None:
         timestamp = time.strftime("%H:%M:%S")
@@ -2074,6 +2147,7 @@ def make_handler(
     stop_after: int | None = None,
     show_hidden: bool = False,
     runtime_settings: RuntimeSettings | None = None,
+    event_logger: EventLogger | None = None,
 ) -> type[UploadHandler]:
     """Bind one configured upload directory/settings object to the handler class."""
     upload_dir = upload_dir.resolve()
@@ -2085,6 +2159,8 @@ def make_handler(
             stop_after,
             show_hidden,
         )
+    if event_logger is None:
+        event_logger = EventLogger(log_file_path(upload_dir))
 
     class ConfiguredUploadHandler(UploadHandler):
         def __init__(self, *args, **kwargs):
@@ -2092,6 +2168,7 @@ def make_handler(
 
     ConfiguredUploadHandler.upload_dir = upload_dir
     ConfiguredUploadHandler.runtime_settings = runtime_settings
+    ConfiguredUploadHandler.event_logger = event_logger
     return ConfiguredUploadHandler
 
 
@@ -2115,6 +2192,7 @@ def run_server(
 ) -> None:
     upload_dir = Path(".").resolve()
     upload_dir.mkdir(parents=True, exist_ok=True)
+    event_logger = EventLogger(log_file_path(upload_dir))
     runtime_settings = RuntimeSettings(
         max_upload_size,
         False,
@@ -2122,13 +2200,26 @@ def run_server(
         stop_after,
         False,
     )
-    handler_class = make_handler(upload_dir, runtime_settings=runtime_settings)
+    handler_class = make_handler(
+        upload_dir,
+        runtime_settings=runtime_settings,
+        event_logger=event_logger,
+    )
 
     with ThreadingHTTPServer((host, port), handler_class) as server:
         actual_host, actual_port = server.server_address[:2]
         runtime_settings.start_auto_stop(server)
+        event_logger.write(
+            "Server started "
+            f"(directory {upload_dir.resolve()}, "
+            f"host {host or actual_host}, port {actual_port}, "
+            f"upload limit {format_size(max_upload_size)}, "
+            f"command timeout {format_duration(command_timeout)}, "
+            f"auto-stop {format_duration(stop_after)})"
+        )
 
         print(f"Serving directory: {upload_dir.resolve()}")
+        print(f"Log file: {event_logger.path}")
         print(f"Upload limit: {format_size(max_upload_size)}")
         print(f"Command timeout: {format_duration(command_timeout)}")
         if stop_after is not None:
@@ -2146,6 +2237,7 @@ def run_server(
         try:
             server.serve_forever()
         finally:
+            event_logger.write("Server stopped")
             runtime_settings.cancel_auto_stop()
 
 

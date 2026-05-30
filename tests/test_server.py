@@ -16,6 +16,7 @@ from upload_server.server import (
     delete_selected_paths,
     files_for_zip,
     iter_shared_files,
+    log_file_path,
     make_handler,
     open_upload_target,
     parse_duration,
@@ -329,6 +330,108 @@ def test_run_command_endpoint_is_always_available(tmp_path: Path) -> None:
 
     assert payload["returncode"] == 0
     assert payload["stdout"] == "endpoint"
+
+
+def test_activity_log_file_records_server_actions(tmp_path: Path) -> None:
+    def request(
+        host: str,
+        port: int,
+        method: str,
+        path: str,
+        body: bytes | str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, bytes]:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        data = response.read()
+        status = response.status
+        connection.close()
+        return status, data
+
+    with running_server(tmp_path) as (host, port):
+        log_path = log_file_path(tmp_path)
+        assert log_path.exists()
+
+        status, _ = request(
+            host,
+            port,
+            "PUT",
+            "/example.txt",
+            body=b"hello",
+            headers={"Content-Length": "5"},
+        )
+        assert status == 201
+
+        status, data = request(host, port, "GET", "/example.txt")
+        assert status == 200
+        assert data == b"hello"
+
+        command = json.dumps({"command": "printf log"})
+        status, _ = request(
+            host,
+            port,
+            "POST",
+            "/run-command",
+            body=command,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(command)),
+            },
+        )
+        assert status == 200
+
+        settings = json.dumps({"max_size": "1MB", "overwrite": True})
+        status, _ = request(
+            host,
+            port,
+            "POST",
+            "/settings",
+            body=settings,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(settings)),
+            },
+        )
+        assert status == 200
+
+        delete_body = json.dumps({"paths": ["example.txt"]})
+        status, _ = request(
+            host,
+            port,
+            "POST",
+            "/delete",
+            body=delete_body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(delete_body)),
+            },
+        )
+        assert status == 200
+
+        bad_command = json.dumps({})
+        status, _ = request(
+            host,
+            port,
+            "POST",
+            "/run-command",
+            body=bad_command,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(bad_command)),
+            },
+        )
+        assert status == 400
+
+    log_text = log_file_path(tmp_path).read_text(encoding="utf-8")
+    assert "127.0.0.1 Uploaded example.txt (5 B)" in log_text
+    assert "127.0.0.1 Downloaded example.txt (5 B)" in log_text
+    assert "127.0.0.1 Ran command 'printf log'" in log_text
+    assert "Updated settings (limit 1.0 MB" in log_text
+    assert "Overwrite" in log_text
+    assert "Hidden" in log_text
+    assert "Deleted selected paths (1 files, 0 folders; requested: example.txt)" in log_text
+    assert "Rejected POST /run-command (400 Missing command)" in log_text
 
 
 def test_command_presets_default_empty_and_persist(tmp_path: Path) -> None:
