@@ -881,18 +881,6 @@ def build_index_html(
       font: 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
       font-weight: 400;
     }}
-    .settings-status {{
-      min-height: 20px;
-      color: var(--muted);
-      font-size: 13px;
-      grid-column: 1 / -1;
-    }}
-    .settings-status.error {{
-      color: var(--warn);
-    }}
-    .settings-status:empty {{
-      display: none;
-    }}
     .workbench {{
       display: grid;
       grid-template-columns: minmax(0, 1fr);
@@ -1213,7 +1201,6 @@ def build_index_html(
           <input id="settings-stop-after" type="text" value="{stop_after_value}" placeholder="off">
         </label>
         <button id="settings-save" class="button" type="submit">Save</button>
-        <div id="settings-status" class="settings-status"></div>
       </form>
     </section>
 
@@ -1319,7 +1306,6 @@ def build_index_html(
     const settingsCommandTimeout = document.getElementById("settings-command-timeout");
     const settingsStopAfter = document.getElementById("settings-stop-after");
     const settingsSave = document.getElementById("settings-save");
-    const settingsStatus = document.getElementById("settings-status");
     const statOverwrite = document.getElementById("stat-overwrite");
     const statHidden = document.getElementById("stat-hidden");
     const terminalStates = Array.from(document.querySelectorAll(".terminal")).map(panel => ({{
@@ -1557,8 +1543,6 @@ def build_index_html(
 
     async function postSettings(updates) {{
       setSettingsRunning(true);
-      settingsStatus.className = "settings-status";
-      settingsStatus.textContent = "Saving";
 
       try {{
         const response = await fetch("/settings", {{
@@ -1571,17 +1555,14 @@ def build_index_html(
         const result = await response.json();
 
         if (!response.ok) {{
-          settingsStatus.className = "settings-status error";
-          settingsStatus.textContent = result.error || "Settings failed";
-          return;
+          console.warn(result.error || "Settings failed");
+          return null;
         }}
 
         applySettings(result);
-        settingsStatus.textContent = "Saved";
         return result;
       }} catch (error) {{
-        settingsStatus.className = "settings-status error";
-        settingsStatus.textContent = error.message;
+        console.warn(error.message);
         return null;
       }} finally {{
         setSettingsRunning(false);
