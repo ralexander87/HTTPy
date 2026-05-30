@@ -835,7 +835,7 @@ def build_index_html(
     }}
     .workbench {{
       display: grid;
-      grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: 16px;
       align-items: stretch;
       margin-bottom: 24px;
@@ -871,6 +871,9 @@ def build_index_html(
     }}
     .command-presets {{
       padding: 12px;
+    }}
+    .command-presets .examples-grid {{
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }}
     .muted {{ color: var(--muted); }}
     .button {{
@@ -1078,6 +1081,7 @@ def build_index_html(
     @media (max-width: 720px) {{
       main {{ width: min(100% - 20px, 1280px); margin-top: 18px; }}
       .workbench {{ grid-template-columns: minmax(0, 1fr); }}
+      .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
       header.top, .file-head {{ align-items: stretch; flex-direction: column; }}
