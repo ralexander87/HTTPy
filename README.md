@@ -39,7 +39,7 @@ Open the printed URL in a browser. The page includes:
 - selected file/folder delete
 - a refresh button for the file list
 - selected file/folder command presets for list, size, and stat
-- a lightweight CLI panel that runs commands in the shared directory
+- two lightweight CLI panels that run commands in the shared directory
 - live settings for upload size, rename/overwrite mode, hidden visibility, command timeout, and auto-stop
 
 Existing files are not overwritten by default. If `photo.jpg` already exists, the

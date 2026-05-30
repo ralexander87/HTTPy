@@ -479,7 +479,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="command-size-selected"' in page
     assert 'id="command-stat-selected"' in page
     command_panel_start = page.index('class="panel command-presets"')
-    terminal_start = page.index('class="panel terminal"')
+    terminal_start = page.index('class="terminal-grid"')
     assert command_panel_start < page.index('id="command-list-selected"') < terminal_start
     assert 'class="button secondary small run-command-preset"' in page
     assert 'data-command-target="command-list-selected"' in page
@@ -498,18 +498,26 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="stat-hidden"' in page
     assert 'data-visible="false"' in page
     assert ">Hidden</button>" in page
+    assert 'class="terminal-grid"' in page
+    assert page.count('class="panel terminal"') == 2
     assert 'id="command-form"' in page
+    assert 'id="command-form-2"' in page
     assert 'class="command-actions"' in page
     assert 'id="run-command"' in page
+    assert 'id="run-command-2"' in page
     assert 'id="clear-command"' in page
+    assert 'id="clear-command-2"' in page
     assert 'id="terminal-output"' in page
+    assert 'id="terminal-output-2"' in page
+    assert ">CLI 1</h2>" in page
+    assert ">CLI 2</h2>" in page
     assert "CLI enabled" not in page
     assert "<span class=\"muted\">shell</span>" in page
     assert "$ pwd" in page
     assert "data-cli-enabled" not in page
     assert 'onsubmit="return false"' in page
-    assert 'appendTerminal(`\\n$ ${command}\\n`);' in page
-    assert 'appendTerminal("exit 0\\n");' in page
+    assert 'appendTerminal(`\\n$ ${command}\\n`, terminal);' in page
+    assert 'appendTerminal("exit 0\\n", terminal);' in page
     assert 'statOverwrite.addEventListener("click", toggleOverwriteMode);' in page
     assert 'statHidden.addEventListener("click", toggleHiddenVisibility);' in page
     assert 'async function postSettings(updates)' in page
@@ -521,10 +529,10 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'commandListSelected.textContent = `ls -lah -- ${args}`;' in page
     assert 'commandSizeSelected.textContent = `du -sh -- ${args}`;' in page
     assert 'commandStatSelected.textContent = `stat -- ${args}`;' in page
-    assert 'async function executeCommand(command)' in page
-    assert 'clearCommandButton.addEventListener("click", runClearCommand);' in page
-    assert 'async function runClearCommand()' in page
-    assert 'await executeCommand("clear");' in page
+    assert 'async function executeCommand(command, terminal = activeTerminal)' in page
+    assert 'terminal.clearButton.addEventListener("click", () => runClearCommand(terminal));' in page
+    assert 'async function runClearCommand(terminal = activeTerminal)' in page
+    assert 'await executeCommand("clear", terminal);' in page
     assert 'appendTerminal("\nCLI is disabled' not in page
     assert 'String.raw`Invoke-WebRequest' not in page
     assert 'command === "clear"' in page

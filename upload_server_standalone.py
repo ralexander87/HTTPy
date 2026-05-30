@@ -907,6 +907,11 @@ def build_index_html(
       padding: 0 10px;
       font-size: 13px;
     }}
+    .terminal-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }}
     .terminal {{
       height: 420px;
       display: grid;
@@ -951,7 +956,7 @@ def build_index_html(
       color: var(--muted);
       font: 700 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
     }}
-    #command-input {{
+    .command-input {{
       min-width: 0;
       min-height: 36px;
       border: 1px solid var(--line);
@@ -1081,6 +1086,7 @@ def build_index_html(
     @media (max-width: 720px) {{
       main {{ width: min(100% - 20px, 1280px); margin-top: 18px; }}
       .workbench {{ grid-template-columns: minmax(0, 1fr); }}
+      .terminal-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
@@ -1161,21 +1167,39 @@ def build_index_html(
         </div>
       </section>
 
-      <section class="panel terminal">
-        <header class="terminal-head">
-          <h2>CLI</h2>
-          <span class="muted">shell</span>
-        </header>
-        <pre id="terminal-output" class="terminal-output">{terminal_initial}</pre>
-        <form id="command-form" class="command-form" onsubmit="return false">
-          <span class="prompt">$</span>
-          <input id="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
-          <div class="command-actions">
-            <button id="run-command" class="button" type="submit">Run</button>
-            <button id="clear-command" class="button secondary" type="button">Clear</button>
-          </div>
-        </form>
-      </section>
+      <div class="terminal-grid">
+        <section class="panel terminal">
+          <header class="terminal-head">
+            <h2>CLI 1</h2>
+            <span class="muted">shell</span>
+          </header>
+          <pre id="terminal-output" class="terminal-output">{terminal_initial}</pre>
+          <form id="command-form" class="command-form" onsubmit="return false">
+            <span class="prompt">$</span>
+            <input id="command-input" class="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
+            <div class="command-actions">
+              <button id="run-command" class="button run-command" type="submit">Run</button>
+              <button id="clear-command" class="button secondary clear-command" type="button">Clear</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel terminal">
+          <header class="terminal-head">
+            <h2>CLI 2</h2>
+            <span class="muted">shell</span>
+          </header>
+          <pre id="terminal-output-2" class="terminal-output">{terminal_initial}</pre>
+          <form id="command-form-2" class="command-form" onsubmit="return false">
+            <span class="prompt">$</span>
+            <input id="command-input-2" class="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
+            <div class="command-actions">
+              <button id="run-command-2" class="button run-command" type="submit">Run</button>
+              <button id="clear-command-2" class="button secondary clear-command" type="button">Clear</button>
+            </div>
+          </form>
+        </section>
+      </div>
     </div>
 
     <section>
@@ -1223,11 +1247,16 @@ def build_index_html(
     const statHidden = document.getElementById("stat-hidden");
     const statCommandTimeout = document.getElementById("stat-command-timeout");
     const statAutoStop = document.getElementById("stat-auto-stop");
-    const commandForm = document.getElementById("command-form");
-    const commandInput = document.getElementById("command-input");
-    const terminalOutput = document.getElementById("terminal-output");
-    const commandButton = document.getElementById("run-command");
-    const clearCommandButton = document.getElementById("clear-command");
+    const terminalStates = Array.from(document.querySelectorAll(".terminal")).map(panel => ({{
+      panel: panel,
+      form: panel.querySelector(".command-form"),
+      input: panel.querySelector(".command-input"),
+      output: panel.querySelector(".terminal-output"),
+      runButton: panel.querySelector(".run-command"),
+      clearButton: panel.querySelector(".clear-command"),
+      running: false
+    }}));
+    let activeTerminal = terminalStates[0];
 
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
@@ -1237,9 +1266,14 @@ def build_index_html(
     settingsForm.addEventListener("submit", saveSettings);
     statOverwrite.addEventListener("click", toggleOverwriteMode);
     statHidden.addEventListener("click", toggleHiddenVisibility);
-    commandForm.addEventListener("submit", runCommand);
-    clearCommandButton.addEventListener("click", runClearCommand);
     updateCommandPresets();
+
+    for (const terminal of terminalStates) {{
+      terminal.panel.addEventListener("pointerdown", () => setActiveTerminal(terminal));
+      terminal.input.addEventListener("focus", () => setActiveTerminal(terminal));
+      terminal.form.addEventListener("submit", event => runCommand(event, terminal));
+      terminal.clearButton.addEventListener("click", () => runClearCommand(terminal));
+    }}
 
     for (const button of runPresetButtons) {{
       button.addEventListener("click", runCommandPreset);
@@ -1383,20 +1417,27 @@ def build_index_html(
     async function runCommandPreset(event) {{
       const targetId = event.currentTarget.dataset.commandTarget;
       const target = document.getElementById(targetId);
-      await executeCommand(target ? target.textContent.trim() : "");
+      await executeCommand(target ? target.textContent.trim() : "", activeTerminal);
     }}
 
-    function setCommandRunning(isRunning) {{
-      commandButton.disabled = isRunning;
-      clearCommandButton.disabled = isRunning;
+    function setActiveTerminal(terminal) {{
+      activeTerminal = terminal;
+    }}
+
+    function setCommandRunning(terminal, isRunning) {{
+      terminal.running = isRunning;
+      terminal.runButton.disabled = isRunning;
+      terminal.clearButton.disabled = isRunning;
+
+      const anyRunning = terminalStates.some(state => state.running);
       for (const button of runPresetButtons) {{
-        button.disabled = isRunning;
+        button.disabled = anyRunning;
       }}
     }}
 
-    function appendTerminal(text) {{
-      terminalOutput.textContent += text;
-      terminalOutput.scrollTop = terminalOutput.scrollHeight;
+    function appendTerminal(text, terminal) {{
+      terminal.output.textContent += text;
+      terminal.output.scrollTop = terminal.output.scrollHeight;
     }}
 
     function setSettingsRunning(isRunning) {{
@@ -1475,28 +1516,28 @@ def build_index_html(
       }}
     }}
 
-    async function runCommand(event) {{
+    async function runCommand(event, terminal = activeTerminal) {{
       event.preventDefault();
-      const command = commandInput.value.trim();
-      commandInput.value = "";
-      await executeCommand(command);
+      const command = terminal.input.value.trim();
+      terminal.input.value = "";
+      await executeCommand(command, terminal);
     }}
 
-    async function runClearCommand() {{
-      await executeCommand("clear");
+    async function runClearCommand(terminal = activeTerminal) {{
+      await executeCommand("clear", terminal);
     }}
 
-    async function executeCommand(command) {{
+    async function executeCommand(command, terminal = activeTerminal) {{
       if (!command) return;
 
       if (command === "clear") {{
-        terminalOutput.textContent = "";
-        commandInput.focus();
+        terminal.output.textContent = "";
+        terminal.input.focus();
         return;
       }}
 
-      setCommandRunning(true);
-      appendTerminal(`\\n$ ${{command}}\\n`);
+      setCommandRunning(terminal, true);
+      appendTerminal(`\\n$ ${{command}}\\n`, terminal);
 
       try {{
         const response = await fetch("/run-command", {{
@@ -1509,19 +1550,19 @@ def build_index_html(
         const result = await response.json();
 
         if (!response.ok) {{
-          appendTerminal(`${{result.error || "Command failed"}}\\n`);
+          appendTerminal(`${{result.error || "Command failed"}}\\n`, terminal);
           return;
         }}
 
-        if (result.stdout) appendTerminal(result.stdout);
-        if (result.stderr) appendTerminal(result.stderr);
-        if (!result.stdout && !result.stderr && result.returncode === 0) appendTerminal("exit 0\\n");
-        if (result.returncode !== 0) appendTerminal(`[exit ${{result.returncode}}]\\n`);
+        if (result.stdout) appendTerminal(result.stdout, terminal);
+        if (result.stderr) appendTerminal(result.stderr, terminal);
+        if (!result.stdout && !result.stderr && result.returncode === 0) appendTerminal("exit 0\\n", terminal);
+        if (result.returncode !== 0) appendTerminal(`[exit ${{result.returncode}}]\\n`, terminal);
       }} catch (error) {{
-        appendTerminal(`${{error.message}}\\n`);
+        appendTerminal(`${{error.message}}\\n`, terminal);
       }} finally {{
-        setCommandRunning(false);
-        commandInput.focus();
+        setCommandRunning(terminal, false);
+        terminal.input.focus();
       }}
     }}
 
