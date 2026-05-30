@@ -41,7 +41,7 @@ Open the printed URL in a browser. The page includes:
 - editable command presets that persist after server restart
 - two lightweight CLI panels that run commands in the shared directory
 - live settings for upload size, rename/overwrite mode, hidden visibility, command timeout, and auto-stop
-- a local `.upload_server.log` file for server start/stop, uploads, downloads, deletes, commands, setting changes, and rejected requests
+- a local `.upload_server.log` file for server start/stop, uploads, downloads, deletes, commands, setting changes, and rejected requests, with a browser toggle to pause logging
 
 Existing files are not overwritten by default. If `photo.jpg` already exists, the
 next upload is saved as `photo-1.jpg`.
@@ -93,8 +93,8 @@ are disabled, and symlinks that escape the shared directory are blocked. Anyone
 who can reach the server can still upload, download, delete, change settings,
 and run CLI commands, so use it only on a trusted network.
 
-Use the browser buttons to switch Rename/Overwrite mode or Hidden/Visible paths
-while the server is running.
+Use the browser buttons to switch Rename/Overwrite mode, Hidden/Visible paths,
+or Log/No Log while the server is running.
 
 The server creates `.upload_server.log` in the directory where it starts. It is
 hidden from the normal browser file list, but keeps useful local activity

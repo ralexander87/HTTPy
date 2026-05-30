@@ -430,8 +430,90 @@ def test_activity_log_file_records_server_actions(tmp_path: Path) -> None:
     assert "Updated settings (limit 1.0 MB" in log_text
     assert "Overwrite" in log_text
     assert "Hidden" in log_text
+    assert "Log enabled" in log_text
     assert "Deleted selected paths (1 files, 0 folders; requested: example.txt)" in log_text
     assert "Rejected POST /run-command (400 Missing command)" in log_text
+
+
+def test_logging_can_be_toggled_without_restart(tmp_path: Path) -> None:
+    def request(
+        host: str,
+        port: int,
+        method: str,
+        path: str,
+        body: bytes | str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, bytes]:
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        data = response.read()
+        status = response.status
+        connection.close()
+        return status, data
+
+    with running_server(tmp_path) as (host, port):
+        settings = json.dumps({"logging": False})
+        status, data = request(
+            host,
+            port,
+            "POST",
+            "/settings",
+            body=settings,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(settings)),
+            },
+        )
+        assert status == 200
+        payload = json.loads(data.decode("utf-8"))
+        assert payload["logging"] is False
+        assert payload["logging_label"] == "No Log"
+        assert payload["logging_status_label"] == "Log disabled"
+
+        status, _ = request(
+            host,
+            port,
+            "PUT",
+            "/quiet.txt",
+            body=b"quiet",
+            headers={"Content-Length": "5"},
+        )
+        assert status == 201
+
+        settings = json.dumps({"logging": True})
+        status, data = request(
+            host,
+            port,
+            "POST",
+            "/settings",
+            body=settings,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(settings)),
+            },
+        )
+        assert status == 200
+        payload = json.loads(data.decode("utf-8"))
+        assert payload["logging"] is True
+        assert payload["logging_label"] == "Log"
+        assert payload["logging_status_label"] == "Log enabled"
+
+        status, _ = request(
+            host,
+            port,
+            "PUT",
+            "/loud.txt",
+            body=b"loud",
+            headers={"Content-Length": "4"},
+        )
+        assert status == 201
+
+    log_text = log_file_path(tmp_path).read_text(encoding="utf-8")
+    assert "Log disabled" in log_text
+    assert "Uploaded quiet.txt" not in log_text
+    assert "Log enabled" in log_text
+    assert "Uploaded loud.txt (4 B)" in log_text
 
 
 def test_command_presets_default_empty_and_persist(tmp_path: Path) -> None:
@@ -630,6 +712,8 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "min-width: 0;" in page
     assert "width: 100%;" in page
     assert 'class="file-title"' in page
+    assert ".file-title .icon-button {" in page
+    assert "margin-left: auto;" in page
     assert '<span class="pill">2 files</span>' not in page
     assert '<span class="pill">8 B</span>' not in page
     assert page.index('id="refresh-files"') < page.index('id="choose-files"')
@@ -705,9 +789,15 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'data-enabled="false"' in page
     assert ">Rename</button>" in page
     assert 'id="stat-hidden"' in page
-    assert page.index('id="stat-hidden"') < page.index('id="refresh-files"')
+    assert page.index('id="stat-hidden"') < page.index('id="stat-log"')
     assert 'data-visible="false"' in page
     assert ">Hidden</button>" in page
+    assert 'id="stat-log"' in page
+    assert page.index('id="stat-log"') < page.index('id="refresh-files"')
+    assert 'data-logging="true"' in page
+    assert 'aria-label="Log enabled"' in page
+    assert 'title="Log enabled"' in page
+    assert ">Log</button>" in page
     assert 'class="terminal-grid"' in page
     assert 'class="terminal-title"' in page
     assert page.count('class="panel terminal"') == 2
@@ -735,10 +825,13 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'appendTerminal("exit 0\\n", terminal);' in page
     assert 'statOverwrite.addEventListener("click", toggleOverwriteMode);' in page
     assert 'statHidden.addEventListener("click", toggleHiddenVisibility);' in page
+    assert 'statLog.addEventListener("click", toggleLogging);' in page
     assert 'async function postSettings(updates)' in page
     assert 'async function toggleOverwriteMode()' in page
     assert 'async function toggleHiddenVisibility()' in page
     assert 'show_hidden: statHidden.dataset.visible !== "true"' in page
+    assert 'async function toggleLogging()' in page
+    assert 'logging: statLog.dataset.logging !== "true"' in page
     assert 'function shellQuote(path)' not in page
     assert 'commandListSelected.textContent' not in page
     assert 'commandSizeSelected.textContent' not in page

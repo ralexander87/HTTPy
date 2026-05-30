@@ -299,12 +299,14 @@ class RuntimeSettings:
         command_timeout: int | None,
         stop_after: int | None,
         show_hidden: bool,
+        logging_enabled: bool = True,
     ) -> None:
         self.max_upload_size = max_upload_size
         self.overwrite_uploads = overwrite_uploads
         self.command_timeout = command_timeout
         self.stop_after = stop_after
         self.show_hidden = show_hidden
+        self.logging_enabled = logging_enabled
         self.auto_stop_deadline: float | None = None
         self.auto_stop_timer: threading.Timer | None = None
         self.lock = threading.Lock()
@@ -322,6 +324,7 @@ class RuntimeSettings:
                 "stop_after": self.stop_after,
                 "auto_stop_remaining": remaining,
                 "show_hidden": self.show_hidden,
+                "logging_enabled": self.logging_enabled,
             }
 
     def apply_updates(self, server: ThreadingHTTPServer, updates: dict) -> None:
@@ -337,6 +340,8 @@ class RuntimeSettings:
                 self._schedule_auto_stop_locked(server)
             if "show_hidden" in updates:
                 self.show_hidden = updates["show_hidden"]
+            if "logging_enabled" in updates:
+                self.logging_enabled = updates["logging_enabled"]
 
     def start_auto_stop(self, server: ThreadingHTTPServer) -> None:
         with self.lock:
@@ -397,6 +402,11 @@ def settings_to_json(settings: RuntimeSettings) -> dict:
         "auto_stop_remaining_label": format_duration(auto_stop_remaining),
         "show_hidden": snapshot["show_hidden"],
         "show_hidden_label": "Visible" if snapshot["show_hidden"] else "Hidden",
+        "logging": snapshot["logging_enabled"],
+        "logging_label": "Log" if snapshot["logging_enabled"] else "No Log",
+        "logging_status_label": (
+            "Log enabled" if snapshot["logging_enabled"] else "Log disabled"
+        ),
     }
 
 
@@ -424,6 +434,11 @@ def parse_settings_payload(payload: object) -> dict:
         if not isinstance(payload["show_hidden"], bool):
             raise ValueError("show_hidden must be true or false")
         updates["show_hidden"] = payload["show_hidden"]
+
+    if "logging" in payload:
+        if not isinstance(payload["logging"], bool):
+            raise ValueError("logging must be true or false")
+        updates["logging_enabled"] = payload["logging"]
 
     return updates
 
@@ -790,6 +805,7 @@ def build_index_html(
     command_timeout: int | None = 30,
     stop_after: int | None = None,
     show_hidden: bool = False,
+    logging_enabled: bool = True,
 ) -> bytes:
     """Build the complete browser UI as one self-contained HTML document."""
     root = upload_dir.resolve()
@@ -802,6 +818,9 @@ def build_index_html(
     overwrite_pressed = str(overwrite_uploads).lower()
     hidden_text = "Visible" if show_hidden else "Hidden"
     hidden_pressed = str(show_hidden).lower()
+    log_text = "Log" if logging_enabled else "No Log"
+    log_pressed = str(logging_enabled).lower()
+    log_status = "Log enabled" if logging_enabled else "Log disabled"
     terminal_initial = f"$ pwd\n{html.escape(str(root))}"
     command_preset_values = [
         html.escape(command, quote=True) for command in load_command_presets(root)
@@ -1089,6 +1108,9 @@ def build_index_html(
       align-items: center;
       gap: 8px;
     }}
+    .file-title .icon-button {{
+      margin-left: auto;
+    }}
     .file-actions {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1315,6 +1337,7 @@ def build_index_html(
           <span class="toggle-group">
             <button id="stat-overwrite" class="pill pill-button" type="button" data-enabled="{overwrite_pressed}" aria-pressed="{overwrite_pressed}">{overwrite_text}</button>
             <button id="stat-hidden" class="pill pill-button" type="button" data-visible="{hidden_pressed}" aria-pressed="{hidden_pressed}">{hidden_text}</button>
+            <button id="stat-log" class="pill pill-button" type="button" data-logging="{log_pressed}" aria-pressed="{log_pressed}" aria-label="{log_status}" title="{log_status}">{log_text}</button>
           </span>
           <button id="refresh-files" class="button secondary small icon-button" type="button" aria-label="Refresh" title="Refresh"><span aria-hidden="true">&#x21bb;</span></button>
         </div>
@@ -1355,6 +1378,7 @@ def build_index_html(
     const settingsSave = document.getElementById("settings-save");
     const statOverwrite = document.getElementById("stat-overwrite");
     const statHidden = document.getElementById("stat-hidden");
+    const statLog = document.getElementById("stat-log");
     const terminalStates = Array.from(document.querySelectorAll(".terminal")).map(panel => ({{
       panel: panel,
       form: panel.querySelector(".command-form"),
@@ -1375,6 +1399,7 @@ def build_index_html(
     settingsForm.addEventListener("submit", saveSettings);
     statOverwrite.addEventListener("click", toggleOverwriteMode);
     statHidden.addEventListener("click", toggleHiddenVisibility);
+    statLog.addEventListener("click", toggleLogging);
 
     for (const terminal of terminalStates) {{
       terminal.panel.addEventListener("pointerdown", () => setActiveTerminal(terminal));
@@ -1572,6 +1597,7 @@ def build_index_html(
       settingsSave.disabled = isRunning;
       statOverwrite.disabled = isRunning;
       statHidden.disabled = isRunning;
+      statLog.disabled = isRunning;
     }}
 
     function applySettings(settings) {{
@@ -1586,6 +1612,11 @@ def build_index_html(
       statHidden.textContent = settings.show_hidden_label;
       statHidden.dataset.visible = String(Boolean(settings.show_hidden));
       statHidden.setAttribute("aria-pressed", String(Boolean(settings.show_hidden)));
+      statLog.textContent = settings.logging_label;
+      statLog.dataset.logging = String(Boolean(settings.logging));
+      statLog.setAttribute("aria-pressed", String(Boolean(settings.logging)));
+      statLog.setAttribute("aria-label", settings.logging_status_label);
+      statLog.setAttribute("title", settings.logging_status_label);
     }}
 
     async function postSettings(updates) {{
@@ -1634,6 +1665,10 @@ def build_index_html(
       if (result) {{
         window.location.reload();
       }}
+    }}
+
+    async function toggleLogging() {{
+      await postSettings({{ logging: statLog.dataset.logging !== "true" }});
     }}
 
     async function runCommand(event, terminal = activeTerminal) {{
@@ -1961,6 +1996,8 @@ class UploadHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": str(exc)}, status=400)
             return
 
+        logging_changed = "logging_enabled" in updates
+        previous_logging = self.runtime_settings.snapshot()["logging_enabled"]
         self.runtime_settings.apply_updates(self.server, updates)
         settings_payload = settings_to_json(self.runtime_settings)
         self.send_json(settings_payload)
@@ -1970,7 +2007,9 @@ class UploadHandler(SimpleHTTPRequestHandler):
             f"CLI {settings_payload['command_timeout_label']}, "
             f"stop {settings_payload['stop_after_label']}, "
             f"{settings_payload['overwrite_label']}, "
-            f"{settings_payload['show_hidden_label']})"
+            f"{settings_payload['show_hidden_label']}, "
+            f"{settings_payload['logging_status_label']})",
+            force=logging_changed and previous_logging != settings_payload["logging"],
         )
 
     def update_command_presets(self) -> None:
@@ -2080,6 +2119,7 @@ class UploadHandler(SimpleHTTPRequestHandler):
             settings["command_timeout"],
             settings["stop_after"],
             settings["show_hidden"],
+            settings["logging_enabled"],
         )
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2131,8 +2171,9 @@ class UploadHandler(SimpleHTTPRequestHandler):
         else:
             self.log_event(f"Downloaded ZIP ({len(files)} files, {format_size(total_size)})")
 
-    def log_event(self, message: str) -> None:
-        self.event_logger.write(message, self.client_address[0])
+    def log_event(self, message: str, force: bool = False) -> None:
+        if force or self.runtime_settings.snapshot()["logging_enabled"]:
+            self.event_logger.write(message, self.client_address[0])
 
     def log_message(self, format: str, *args) -> None:
         timestamp = time.strftime("%H:%M:%S")
@@ -2237,7 +2278,8 @@ def run_server(
         try:
             server.serve_forever()
         finally:
-            event_logger.write("Server stopped")
+            if runtime_settings.snapshot()["logging_enabled"]:
+                event_logger.write("Server stopped")
             runtime_settings.cancel_auto_stop()
 
 
