@@ -451,6 +451,9 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert '<span class="folder-name">docs</span>' in page
     assert '<a class="file-name" href="/docs/note.txt">note.txt</a>' in page
     assert '<a class="file-name" href="/root.txt">root.txt</a>' in page
+    assert '<header class="top">' not in page
+    assert '<h1>File Share</h1>' not in page
+    assert f'<div class="muted">{tmp_path}</div>' not in page
     assert 'class="notice" role="note"' in page
     assert "Personal local use only." in page
     assert "Security is minimal" in page

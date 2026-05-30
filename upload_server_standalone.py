@@ -730,19 +730,11 @@ def build_index_html(
       width: min(1280px, calc(100% - 32px));
       margin: 32px auto;
     }}
-    header.top {{
-      display: flex;
-      gap: 16px;
-      align-items: end;
-      justify-content: space-between;
-      margin-bottom: 18px;
-    }}
-    h1, h2 {{
+    h2 {{
       margin: 0;
       font-weight: 700;
       letter-spacing: 0;
     }}
-    h1 {{ font-size: clamp(28px, 4vw, 42px); }}
     h2 {{ font-size: 18px; }}
     .pill {{
       border: 1px solid var(--line);
@@ -1092,7 +1084,6 @@ def build_index_html(
       .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
-      header.top {{ align-items: stretch; flex-direction: column; }}
       .files-layout {{ grid-template-columns: minmax(0, 1fr); }}
       .file-title {{ align-items: flex-start; }}
       summary {{ grid-template-columns: 24px 20px minmax(0, 1fr); }}
@@ -1106,13 +1097,6 @@ def build_index_html(
 </head>
 <body data-max-upload-size="{max_upload_size or 0}">
   <main>
-    <header class="top">
-      <div>
-        <h1>File Share</h1>
-        <div class="muted">{html.escape(str(root))}</div>
-      </div>
-    </header>
-
     <section class="notice" role="note">
       <strong>Personal local use only.</strong>
       Security is minimal: anyone who can reach this server can upload, download, delete,
