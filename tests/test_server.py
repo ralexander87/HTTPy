@@ -463,9 +463,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "grid-template-rows: auto minmax(0, 1fr) auto;" in page
     assert 'class="upload-commands"' in page
     assert "examples-panel" not in page
+    assert 'id="choose-files"' in page
     assert 'id="download-selected"' in page
     assert 'id="delete-selected"' in page
     assert 'id="refresh-files"' in page
+    assert page.index('id="choose-files"') < page.index('id="download-selected"')
     assert 'id="command-list-selected"' in page
     assert 'id="command-size-selected"' in page
     assert 'id="command-stat-selected"' in page

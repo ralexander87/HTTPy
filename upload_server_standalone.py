@@ -1158,7 +1158,6 @@ def build_index_html(
       <section id="drop-zone" class="panel upload">
         <div class="upload-inner">
           <input id="file-picker" type="file" multiple hidden>
-          <button id="choose-files" class="button" type="button">Choose Files</button>
           <div class="muted">Drop files here</div>
           <progress id="progress" value="0" max="100" hidden></progress>
           <p id="status"></p>
@@ -1203,6 +1202,7 @@ def build_index_html(
       <div class="file-head">
         <h2>Files</h2>
         <div class="file-actions">
+          <button id="choose-files" class="button" type="button">Choose Files</button>
           <button id="download-selected" class="button" type="button" disabled>Download Selected</button>
           <button id="delete-selected" class="button secondary" type="button" disabled>Delete Selected</button>
           <button id="refresh-files" class="button secondary" type="button">Refresh</button>
