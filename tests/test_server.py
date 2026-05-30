@@ -508,6 +508,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="command-list-selected"' in page
     assert 'id="command-size-selected"' in page
     assert 'id="command-stat-selected"' in page
+    assert "<h2>Commands</h2>" not in page
     command_panel_start = page.index('class="panel command-presets"')
     terminal_start = page.index('class="terminal-grid"')
     assert command_panel_start < page.index('id="command-list-selected"') < terminal_start
@@ -519,6 +520,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'id="settings-command-timeout"' in page
     assert 'id="settings-stop-after"' in page
     assert "grid-template-columns: max-content minmax(0, 1fr);" in page
+    assert ".settings-status:empty {" in page
     assert 'id="settings-overwrite"' not in page
     assert 'class="toggle-group"' in page
     assert ".pill-button {" in page

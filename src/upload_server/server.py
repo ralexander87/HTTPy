@@ -815,6 +815,9 @@ def build_index_html(
     .settings-status.error {{
       color: var(--warn);
     }}
+    .settings-status:empty {{
+      display: none;
+    }}
     .workbench {{
       display: grid;
       grid-template-columns: minmax(0, 1fr);
@@ -1143,7 +1146,6 @@ def build_index_html(
 
     <div class="workbench">
       <section class="panel command-presets">
-        <h2>Commands</h2>
         <div class="examples-grid">
           <div class="command-example">
             <code id="command-list-selected"></code>
