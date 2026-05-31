@@ -67,7 +67,7 @@ Open the printed URL in a browser. The page includes:
 - a refresh button for the file list
 - editable command presets that persist after server restart
 - two lightweight CLI panels that run commands in the shared directory
-- live settings for upload size, rename/overwrite mode, hidden visibility, command timeout, and auto-stop
+- live toggle buttons for rename/overwrite mode, hidden visibility, and logging
 - a local `.upload_server.log` file for server start/stop, uploads, downloads, deletes, commands, setting changes, and rejected requests, with a browser toggle to pause logging
 
 Existing files are not overwritten by default. If `photo.jpg` already exists, the
@@ -97,22 +97,10 @@ The browser CLI, settings, upload, download, and delete actions are always
 available without authentication. Use this only for short personal sessions on
 trusted networks.
 
-Limit each upload:
+Set host and port at startup:
 
 ```bash
-python upload_server_standalone.py --max-size 500MB
-```
-
-Stop automatically after a short sharing session:
-
-```bash
-python upload_server_standalone.py --stop-after 30m
-```
-
-Limit browser CLI commands:
-
-```bash
-python upload_server_standalone.py --command-timeout 30s
+python upload_server_standalone.py --host 127.0.0.1 --port 9000
 ```
 
 By default, dot-hidden paths are not listed or served, directory listings

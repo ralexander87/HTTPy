@@ -92,7 +92,9 @@ def test_startup_parser_leaves_browser_only_settings_out_of_cli() -> None:
     assert "--upload-dir" not in help_text
     assert "--overwrite" not in help_text
     assert "--show-hidden" not in help_text
-    assert "--max-size" in help_text
+    assert "--max-size" not in help_text
+    assert "--command-timeout" not in help_text
+    assert "--stop-after" not in help_text
 
 
 def test_open_upload_target_renames_existing_file(tmp_path: Path) -> None:
@@ -770,11 +772,12 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'async function saveCommandPresets()' in page
     assert 'fetch("/command-presets"' in page
     assert 'copy-command' not in page
-    assert 'id="settings-form"' in page
-    assert 'id="settings-max-size"' in page
-    assert 'id="settings-command-timeout"' in page
-    assert 'id="settings-stop-after"' in page
-    assert "grid-template-columns: max-content minmax(0, 1fr);" in page
+    assert 'class="settings-panel"' not in page
+    assert 'id="settings-form"' not in page
+    assert 'id="settings-max-size"' not in page
+    assert 'id="settings-command-timeout"' not in page
+    assert 'id="settings-stop-after"' not in page
+    assert 'id="settings-save"' not in page
     assert "settings-status" not in page
     assert ">Saving<" not in page
     assert ">Saved<" not in page
@@ -840,6 +843,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "function resizeTerminalWithKeyboard(event)" in page
     assert ".terminal-splitter { display: none; }" in page
     assert 'async function postSettings(updates)' in page
+    assert "async function saveSettings(event)" not in page
     assert 'async function toggleOverwriteMode()' in page
     assert 'async function toggleHiddenVisibility()' in page
     assert 'show_hidden: statHidden.dataset.visible !== "true"' in page

@@ -812,9 +812,6 @@ def build_index_html(
     files = iter_shared_files(root, show_hidden)
     file_tree = render_file_tree(root, files)
     overwrite_text = "Overwrite" if overwrite_uploads else "Rename"
-    max_size_value = html.escape(setting_size_value(max_upload_size), quote=True)
-    command_timeout_value = html.escape(setting_duration_value(command_timeout), quote=True)
-    stop_after_value = html.escape(setting_duration_value(stop_after), quote=True)
     overwrite_pressed = str(overwrite_uploads).lower()
     hidden_text = "Visible" if show_hidden else "Hidden"
     hidden_pressed = str(show_hidden).lower()
@@ -912,36 +909,6 @@ def build_index_html(
     }}
     .notice strong {{
       color: var(--warn);
-    }}
-    .settings-panel {{
-      padding: 12px;
-      margin-bottom: 16px;
-    }}
-    .settings-form {{
-      display: grid;
-      grid-template-columns: repeat(3, minmax(120px, 1fr)) auto;
-      gap: 10px;
-      align-items: end;
-    }}
-    .setting-field {{
-      display: grid;
-      grid-template-columns: max-content minmax(0, 1fr);
-      gap: 8px;
-      align-items: center;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-    }}
-    .setting-field input[type="text"] {{
-      min-width: 0;
-      min-height: 36px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 0 10px;
-      background: transparent;
-      color: var(--text);
-      font: 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-      font-weight: 400;
     }}
     .workbench {{
       display: grid;
@@ -1264,8 +1231,6 @@ def build_index_html(
       .terminal-splitter {{ display: none; }}
       .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
-      .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
-      .setting-field {{ grid-template-columns: minmax(110px, max-content) minmax(0, 1fr); }}
       .files-layout {{ grid-template-columns: minmax(0, 1fr); }}
       .file-title {{ align-items: flex-start; }}
       summary {{ grid-template-columns: 24px 20px minmax(0, 1fr); }}
@@ -1284,24 +1249,6 @@ def build_index_html(
       Security is minimal: anyone who can reach this server can upload, download, delete,
       change settings, and run CLI commands. Use only on trusted networks and stop the
       server when finished.
-    </section>
-
-    <section class="panel settings-panel">
-      <form id="settings-form" class="settings-form" onsubmit="return false">
-        <label class="setting-field">
-          Max size
-          <input id="settings-max-size" type="text" value="{max_size_value}" placeholder="unlimited">
-        </label>
-        <label class="setting-field">
-          Command timeout
-          <input id="settings-command-timeout" type="text" value="{command_timeout_value}" placeholder="off">
-        </label>
-        <label class="setting-field">
-          Stop after
-          <input id="settings-stop-after" type="text" value="{stop_after_value}" placeholder="off">
-        </label>
-        <button id="settings-save" class="button" type="submit">Save</button>
-      </form>
     </section>
 
     <div class="workbench">
@@ -1406,11 +1353,6 @@ def build_index_html(
     const commandPresetInputs = Array.from(document.querySelectorAll(".command-preset-input"));
     const runPresetButtons = Array.from(document.querySelectorAll(".run-command-preset"));
     const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
-    const settingsForm = document.getElementById("settings-form");
-    const settingsMaxSize = document.getElementById("settings-max-size");
-    const settingsCommandTimeout = document.getElementById("settings-command-timeout");
-    const settingsStopAfter = document.getElementById("settings-stop-after");
-    const settingsSave = document.getElementById("settings-save");
     const statOverwrite = document.getElementById("stat-overwrite");
     const statHidden = document.getElementById("stat-hidden");
     const statLog = document.getElementById("stat-log");
@@ -1435,7 +1377,6 @@ def build_index_html(
     selectedDownload.addEventListener("click", downloadSelected);
     deleteSelected.addEventListener("click", deleteSelectedFiles);
     refreshFiles.addEventListener("click", () => window.location.reload());
-    settingsForm.addEventListener("submit", saveSettings);
     statOverwrite.addEventListener("click", toggleOverwriteMode);
     statHidden.addEventListener("click", toggleHiddenVisibility);
     statLog.addEventListener("click", toggleLogging);
@@ -1718,7 +1659,6 @@ def build_index_html(
     }}
 
     function setSettingsRunning(isRunning) {{
-      settingsSave.disabled = isRunning;
       statOverwrite.disabled = isRunning;
       statHidden.disabled = isRunning;
       statLog.disabled = isRunning;
@@ -1727,9 +1667,6 @@ def build_index_html(
     function applySettings(settings) {{
       maxUploadSize = settings.max_upload_size || 0;
       document.body.dataset.maxUploadSize = String(maxUploadSize);
-      settingsMaxSize.value = settings.max_size || "";
-      settingsCommandTimeout.value = settings.command_timeout || "";
-      settingsStopAfter.value = settings.stop_after || "";
       statOverwrite.textContent = settings.overwrite_label;
       statOverwrite.dataset.enabled = String(Boolean(settings.overwrite));
       statOverwrite.setAttribute("aria-pressed", String(Boolean(settings.overwrite)));
@@ -1769,15 +1706,6 @@ def build_index_html(
       }} finally {{
         setSettingsRunning(false);
       }}
-    }}
-
-    async function saveSettings(event) {{
-      event.preventDefault();
-      await postSettings({{
-        max_size: settingsMaxSize.value.trim(),
-        command_timeout: settingsCommandTimeout.value.trim(),
-        stop_after: settingsStopAfter.value.trim()
-      }});
     }}
 
     async function toggleOverwriteMode() {{
@@ -2340,9 +2268,6 @@ def make_handler(
 # Command-line entry point and startup messages.
 def print_useful_options() -> None:
     print("Useful options:")
-    print("  --max-size 500MB    Reject uploads larger than this size")
-    print("  --stop-after 30m    Stop automatically after a short session")
-    print("  --command-timeout 30s  Stop long browser CLI commands")
     print("  --port 9000         Use a different port")
     print("  --host 127.0.0.1    Listen only on this computer")
     print("  --help              Show all options")
@@ -2351,13 +2276,13 @@ def print_useful_options() -> None:
 def run_server(
     host: str,
     port: int,
-    max_upload_size: int | None,
-    stop_after: int | None,
-    command_timeout: int | None,
 ) -> None:
     upload_dir = Path(".").resolve()
     upload_dir.mkdir(parents=True, exist_ok=True)
     event_logger = EventLogger(log_file_path(upload_dir))
+    max_upload_size: int | None = None
+    stop_after: int | None = None
+    command_timeout: int | None = 30
     runtime_settings = RuntimeSettings(
         max_upload_size,
         False,
@@ -2377,18 +2302,11 @@ def run_server(
         event_logger.write(
             "Server started "
             f"(directory {upload_dir.resolve()}, "
-            f"host {host or actual_host}, port {actual_port}, "
-            f"upload limit {format_size(max_upload_size)}, "
-            f"command timeout {format_duration(command_timeout)}, "
-            f"auto-stop {format_duration(stop_after)})"
+            f"host {host or actual_host}, port {actual_port})"
         )
 
         print(f"Serving directory: {upload_dir.resolve()}")
         print(f"Log file: {event_logger.path}")
-        print(f"Upload limit: {format_size(max_upload_size)}")
-        print(f"Command timeout: {format_duration(command_timeout)}")
-        if stop_after is not None:
-            print(f"Auto-stop: {format_duration(stop_after)}")
         if host in {"", "0.0.0.0"}:
             print(
                 "Warning: anyone on this network can upload, download, delete, "
@@ -2411,24 +2329,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a small HTTP upload server.")
     parser.add_argument("--host", default="0.0.0.0", help="Host/IP to bind to.")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on.")
-    parser.add_argument(
-        "--max-size",
-        type=parse_size,
-        default=None,
-        help="Maximum upload size per file, for example 500MB. Defaults to unlimited.",
-    )
-    parser.add_argument(
-        "--stop-after",
-        type=parse_duration,
-        default=None,
-        help="Stop automatically after a duration, for example 30m or 2h.",
-    )
-    parser.add_argument(
-        "--command-timeout",
-        type=parse_duration,
-        default=30,
-        help="Stop a browser CLI command after this duration. Use 0 to disable.",
-    )
     return parser
 
 
@@ -2436,13 +2336,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
-        run_server(
-            args.host,
-            args.port,
-            args.max_size,
-            args.stop_after,
-            args.command_timeout,
-        )
+        run_server(args.host, args.port)
     except KeyboardInterrupt:
         print("\nServer stopped.")
 
