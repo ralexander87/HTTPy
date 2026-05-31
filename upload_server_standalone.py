@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -25,6 +27,7 @@ COMMAND_PRESETS_FILE_NAME = ".upload_server_commands.json"
 MAX_COMMAND_PRESET_LENGTH = 2000
 LOG_FILE_NAME = ".upload_server.log"
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+COMMAND_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 SIZE_UNITS = {
     "": 1,
     "B": 1,
@@ -119,6 +122,183 @@ def command_output_to_text(output: str | bytes | None) -> str:
 
     text = ANSI_ESCAPE_RE.sub("", text)
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def normalize_command_session_id(value: object, fallback: str) -> str:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if COMMAND_SESSION_ID_RE.fullmatch(cleaned):
+            return cleaned
+    return fallback
+
+
+def parse_shell_environment(payload: bytes) -> dict[str, str]:
+    environment: dict[str, str] = {}
+    for entry in payload.split(b"\x00"):
+        if not entry or b"=" not in entry:
+            continue
+
+        raw_key, raw_value = entry.split(b"=", 1)
+        key = raw_key.decode("utf-8", errors="ignore")
+        if not key:
+            continue
+
+        environment[key] = raw_value.decode("utf-8", errors="replace")
+
+    return environment
+
+
+def list_command_completions(prefix: str, env: dict[str, str]) -> list[str]:
+    if not prefix:
+        return []
+    if "/" in prefix or prefix.startswith(".") or prefix.startswith("~"):
+        return []
+
+    candidates = {
+        "cd",
+        "echo",
+        "env",
+        "exit",
+        "export",
+        "false",
+        "printf",
+        "pwd",
+        "set",
+        "test",
+        "true",
+        "unset",
+    }
+    path_value = env.get("PATH") or os.environ.get("PATH", "")
+    for path_entry in path_value.split(os.pathsep):
+        if not path_entry:
+            continue
+        path_dir = Path(path_entry)
+        try:
+            entries = list(path_dir.iterdir())
+        except OSError:
+            continue
+
+        for entry in entries:
+            name = entry.name
+            if not name.startswith(prefix):
+                continue
+            try:
+                if entry.is_file() and os.access(entry, os.X_OK):
+                    candidates.add(name)
+            except OSError:
+                continue
+
+    return sorted(name for name in candidates if name.startswith(prefix))
+
+
+def list_path_completions(token_prefix: str, cwd: Path) -> list[str]:
+    if not token_prefix:
+        return []
+
+    stripped_prefix = token_prefix
+    leading_quote = ""
+    if token_prefix[0] in {"'", '"'}:
+        leading_quote = token_prefix[0]
+        stripped_prefix = token_prefix[1:]
+        if not stripped_prefix:
+            return []
+
+    if "/" in stripped_prefix:
+        dirname, basename_prefix = stripped_prefix.rsplit("/", 1)
+        display_prefix = f"{dirname}/"
+    else:
+        dirname = ""
+        basename_prefix = stripped_prefix
+        display_prefix = ""
+
+    if dirname:
+        if dirname.startswith("~"):
+            base_dir = Path(dirname).expanduser()
+        else:
+            base_dir = Path(dirname)
+            if not base_dir.is_absolute():
+                base_dir = cwd / base_dir
+    else:
+        base_dir = cwd
+
+    try:
+        entries = list(base_dir.iterdir())
+    except OSError:
+        return []
+
+    suggestions = []
+    for entry in entries:
+        name = entry.name
+        if basename_prefix and not name.startswith(basename_prefix):
+            continue
+        if not basename_prefix.startswith(".") and name.startswith("."):
+            continue
+
+        candidate = f"{display_prefix}{name}"
+        try:
+            if entry.is_dir():
+                candidate += "/"
+        except OSError:
+            pass
+        suggestions.append(f"{leading_quote}{candidate}")
+
+    return sorted(set(suggestions))
+
+
+def complete_command_text(
+    command: str,
+    cursor: int | None,
+    cwd: Path,
+    env: dict[str, str],
+) -> dict:
+    clamped_cursor = len(command) if cursor is None else max(0, min(len(command), int(cursor)))
+    start = clamped_cursor
+    end = clamped_cursor
+
+    while start > 0 and not command[start - 1].isspace():
+        start -= 1
+    while end < len(command) and not command[end].isspace():
+        end += 1
+
+    token_prefix = command[start:clamped_cursor]
+    if not token_prefix:
+        return {
+            "command": command,
+            "cursor": clamped_cursor,
+            "match_count": 0,
+        }
+
+    if token_prefix.startswith("$"):
+        variable_prefix = token_prefix[1:]
+        matches = sorted(f"${name}" for name in env if name.startswith(variable_prefix))
+    else:
+        matches = list_path_completions(token_prefix, cwd)
+        if not command[:start].strip():
+            matches.extend(list_command_completions(token_prefix, env))
+            matches = sorted(set(matches))
+
+    if not matches:
+        return {
+            "command": command,
+            "cursor": clamped_cursor,
+            "match_count": 0,
+        }
+
+    if len(matches) == 1:
+        replacement = matches[0]
+        if not replacement.endswith("/"):
+            replacement += " "
+    else:
+        common_prefix = os.path.commonprefix(matches)
+        replacement = common_prefix if len(common_prefix) > len(token_prefix) else token_prefix
+
+    completed_command = command[:start] + replacement + command[end:]
+    completed_cursor = start + len(replacement)
+    return {
+        "command": completed_command,
+        "cursor": completed_cursor,
+        "match_count": len(matches),
+    }
 
 
 def sanitize_log_message(message: object) -> str:
@@ -232,7 +412,12 @@ def save_command_presets(root_dir: Path, commands: object) -> list[str]:
     return presets
 
 
-def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
+def run_shell_command(
+    command: str,
+    cwd: Path,
+    timeout: int | None,
+    session_state: dict[str, object] | None = None,
+) -> dict:
     """Run one browser CLI command and return JSON-safe output."""
     command = command.strip()
     if not command:
@@ -241,15 +426,87 @@ def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
     if "\x00" in command:
         raise ValueError("invalid command")
 
-    started_at = time.monotonic()
+    root_dir = cwd.resolve()
+    session_cwd = root_dir
+    session_env = dict(os.environ)
+    if session_state is not None:
+        raw_cwd = session_state.get("cwd")
+        if isinstance(raw_cwd, str) and raw_cwd:
+            candidate_cwd = Path(raw_cwd).expanduser()
+            if not candidate_cwd.is_absolute():
+                candidate_cwd = root_dir / candidate_cwd
+            try:
+                resolved_cwd = candidate_cwd.resolve()
+            except OSError:
+                resolved_cwd = root_dir
+            if resolved_cwd.is_dir():
+                session_cwd = resolved_cwd
 
+        raw_env = session_state.get("env")
+        if isinstance(raw_env, dict):
+            parsed_env: dict[str, str] = {}
+            for key, value in raw_env.items():
+                if isinstance(key, str):
+                    parsed_env[key] = str(value)
+            if parsed_env:
+                session_env = parsed_env
+
+    started_at = time.monotonic()
+    if os.name != "posix":
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=str(session_cwd),
+                env=session_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            returncode = completed.returncode
+            stdout = command_output_to_text(completed.stdout)
+            stderr = command_output_to_text(completed.stderr)
+        except subprocess.TimeoutExpired as exc:
+            returncode = 124
+            stdout = command_output_to_text(exc.stdout)
+            stderr = command_output_to_text(exc.stderr)
+            if stderr and not stderr.endswith("\n"):
+                stderr += "\n"
+            stderr += f"Command timed out after {format_duration(timeout)}."
+
+        if session_state is not None:
+            session_state["last_used"] = time.time()
+
+        return {
+            "command": command,
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "elapsed": round(time.monotonic() - started_at, 3),
+            "cwd": str(session_cwd),
+        }
+
+    state_dir = Path(tempfile.mkdtemp(prefix=".upload_server_shell.", dir=str(root_dir)))
+    state_env_path = state_dir / "env.bin"
+    state_pwd_path = state_dir / "pwd.txt"
+    wrapped_command = (
+        "{ "
+        + command
+        + "; }\n"
+        + "command_status=$?\n"
+        + f"pwd > {shlex.quote(str(state_pwd_path))}\n"
+        + f"env -0 > {shlex.quote(str(state_env_path))}\n"
+        + "exit $command_status\n"
+    )
     try:
         # The shell is intentional here: the browser CLI is an opt-in convenience
         # for short trusted-network sessions, not a hardened remote shell.
         completed = subprocess.run(
-            command,
+            wrapped_command,
             shell=True,
-            cwd=str(cwd.resolve()),
+            executable="/bin/sh" if os.name == "posix" else None,
+            cwd=str(session_cwd),
+            env=session_env,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -264,6 +521,27 @@ def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
         if stderr and not stderr.endswith("\n"):
             stderr += "\n"
         stderr += f"Command timed out after {format_duration(timeout)}."
+    finally:
+        if session_state is not None:
+            try:
+                updated_cwd = state_pwd_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                updated_cwd = ""
+
+            if updated_cwd:
+                session_state["cwd"] = updated_cwd
+                session_cwd = Path(updated_cwd)
+
+            try:
+                updated_env = parse_shell_environment(state_env_path.read_bytes())
+            except OSError:
+                updated_env = {}
+
+            if updated_env:
+                session_state["env"] = updated_env
+            session_state["last_used"] = time.time()
+
+        shutil.rmtree(state_dir, ignore_errors=True)
 
     return {
         "command": command,
@@ -271,7 +549,7 @@ def run_shell_command(command: str, cwd: Path, timeout: int | None) -> dict:
         "stdout": stdout,
         "stderr": stderr,
         "elapsed": round(time.monotonic() - started_at, 3),
-        "cwd": str(cwd.resolve()),
+        "cwd": str(session_cwd),
     }
 
 
@@ -750,6 +1028,7 @@ def render_file_row(root_dir: Path, path: Path) -> str:
     checkbox_value = html.escape(relative_path.as_posix(), quote=True)
     display_name = html.escape(relative_path.name)
     checkbox_label = html.escape(f"Select {relative_path.as_posix()}", quote=True)
+    download_label = html.escape(f"Download {relative_path.as_posix()}", quote=True)
     modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
 
     return (
@@ -758,7 +1037,7 @@ def render_file_row(root_dir: Path, path: Path) -> str:
         f"<a class=\"file-name\" href=\"{file_url}\">{display_name}</a>"
         f"<span class=\"file-meta\">{format_size(stat.st_size)}</span>"
         f"<span class=\"file-meta\">{modified}</span>"
-        f"<a class=\"button small\" href=\"{file_url}\" download>Download</a>"
+        f"<a class=\"button secondary small icon-button\" href=\"{file_url}\" download aria-label=\"{download_label}\" title=\"{download_label}\"><span aria-hidden=\"true\">&#x2913;</span></a>"
         "</div>"
     )
 
@@ -1030,23 +1309,8 @@ def build_index_html(
     .terminal {{
       height: 420px;
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-rows: minmax(0, 1fr) auto;
       overflow: hidden;
-    }}
-    .terminal-head {{
-      min-height: 44px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 0 12px;
-      border-bottom: 1px solid var(--line);
-    }}
-    .terminal-title {{
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      min-width: 0;
     }}
     .terminal-output {{
       margin: 0;
@@ -1067,12 +1331,6 @@ def build_index_html(
       padding: 10px;
       border-top: 1px solid var(--line);
     }}
-    .command-actions {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: flex-end;
-    }}
     .prompt {{
       color: var(--muted);
       font: 700 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
@@ -1087,36 +1345,40 @@ def build_index_html(
       color: var(--text);
       font: 14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
     }}
-    .files-layout {{
-      display: grid;
-      grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
-      gap: 16px;
-      align-items: start;
-    }}
-    .file-control-panel {{
+    .files-panel {{
       display: grid;
       gap: 12px;
-      align-content: start;
       padding: 12px;
     }}
-    .file-title {{
+    .files-toolbar {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }}
+    .file-left-controls {{
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 8px;
     }}
-    .file-title .icon-button {{
+    .files-heading {{
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+    }}
+    .file-right-controls {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
       margin-left: auto;
     }}
-    .file-actions {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }}
-    .file-actions .button {{
+    .file-right-controls .button {{
       min-width: 0;
-      width: 100%;
-      white-space: normal;
+      white-space: nowrap;
     }}
     .upload-feedback {{
       display: grid;
@@ -1231,8 +1493,12 @@ def build_index_html(
       .terminal-splitter {{ display: none; }}
       .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
-      .files-layout {{ grid-template-columns: minmax(0, 1fr); }}
-      .file-title {{ align-items: flex-start; }}
+      .files-toolbar {{ align-items: flex-start; }}
+      .file-right-controls {{
+        width: 100%;
+        justify-content: flex-end;
+        margin-left: 0;
+      }}
       summary {{ grid-template-columns: 24px 20px minmax(0, 1fr); }}
       .folder-count {{ grid-column: 3; }}
       .file-row {{ grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 6px; }}
@@ -1271,16 +1537,6 @@ def build_index_html(
 
       <div class="terminal-grid" id="terminal-grid">
         <section class="panel terminal">
-          <header class="terminal-head">
-            <div class="terminal-title">
-              <h2>CLI 1</h2>
-              <span class="muted">shell</span>
-            </div>
-            <div class="command-actions">
-              <button id="run-command" class="button run-command" type="submit" form="command-form">Run</button>
-              <button id="clear-command" class="button secondary clear-command" type="button">Clear</button>
-            </div>
-          </header>
           <pre id="terminal-output" class="terminal-output">{terminal_initial}</pre>
           <form id="command-form" class="command-form" onsubmit="return false">
             <span class="prompt">$</span>
@@ -1291,16 +1547,6 @@ def build_index_html(
         <div id="terminal-splitter" class="terminal-splitter" role="separator" aria-label="Resize terminal panels" aria-orientation="vertical" tabindex="0"></div>
 
         <section class="panel terminal">
-          <header class="terminal-head">
-            <div class="terminal-title">
-              <h2>CLI 2</h2>
-              <span class="muted">shell</span>
-            </div>
-            <div class="command-actions">
-              <button id="run-command-2" class="button run-command" type="submit" form="command-form-2">Run</button>
-              <button id="clear-command-2" class="button secondary clear-command" type="button">Clear</button>
-            </div>
-          </header>
           <pre id="terminal-output-2" class="terminal-output">{terminal_initial}</pre>
           <form id="command-form-2" class="command-form" onsubmit="return false">
             <span class="prompt">$</span>
@@ -1310,29 +1556,29 @@ def build_index_html(
       </div>
     </div>
 
-    <section class="files-layout">
-      <aside class="panel file-control-panel">
-        <div class="file-title">
-          <h2>Files</h2>
+    <section class="panel files-panel">
+      <div class="files-toolbar">
+        <div class="file-left-controls">
+          <h2 class="files-heading">Explorer</h2>
           <span class="toggle-group">
             <button id="stat-overwrite" class="pill pill-button" type="button" data-enabled="{overwrite_pressed}" aria-pressed="{overwrite_pressed}">{overwrite_text}</button>
             <button id="stat-hidden" class="pill pill-button" type="button" data-visible="{hidden_pressed}" aria-pressed="{hidden_pressed}">{hidden_text}</button>
             <button id="stat-log" class="pill pill-button" type="button" data-logging="{log_pressed}" aria-pressed="{log_pressed}" aria-label="{log_status}" title="{log_status}">{log_text}</button>
           </span>
+        </div>
+        <div class="file-right-controls">
+          <input id="file-picker" type="file" multiple hidden>
+          <button id="download-selected" class="button secondary small icon-button" type="button" disabled aria-label="Download Selected" title="Download Selected"><span aria-hidden="true">&#x2913;</span></button>
+          <a class="button secondary" href="/download.zip"><span aria-hidden="true">&#x2913;</span>&nbsp;ZIP</a>
+          <button id="delete-selected" class="button secondary small icon-button" type="button" disabled aria-label="Delete Selected" title="Delete Selected"><span aria-hidden="true">&#x1F5D1;</span></button>
+          <button id="choose-files" class="button secondary small icon-button" type="button" aria-label="Choose Files" title="Choose Files"><span aria-hidden="true">&#x1F4C1;</span></button>
           <button id="refresh-files" class="button secondary small icon-button" type="button" aria-label="Refresh" title="Refresh"><span aria-hidden="true">&#x21bb;</span></button>
         </div>
-        <div class="file-actions">
-          <input id="file-picker" type="file" multiple hidden>
-          <button id="download-selected" class="button" type="button" disabled>Download Selected</button>
-          <button id="choose-files" class="button" type="button">Choose Files</button>
-          <a class="button secondary" href="/download.zip">Download ZIP</a>
-          <button id="delete-selected" class="button secondary" type="button" disabled>Delete Selected</button>
-        </div>
-        <div class="upload-feedback">
-          <progress id="progress" value="0" max="100" hidden></progress>
-          <p id="status"></p>
-        </div>
-      </aside>
+      </div>
+      <div class="upload-feedback">
+        <progress id="progress" value="0" max="100" hidden></progress>
+        <p id="status"></p>
+      </div>
       <div class="file-list-panel">
         {file_tree}
       </div>
@@ -1356,13 +1602,12 @@ def build_index_html(
     const statOverwrite = document.getElementById("stat-overwrite");
     const statHidden = document.getElementById("stat-hidden");
     const statLog = document.getElementById("stat-log");
-    const terminalStates = Array.from(document.querySelectorAll(".terminal")).map(panel => ({{
+    const terminalStates = Array.from(document.querySelectorAll(".terminal")).map((panel, index) => ({{
+      id: `terminal-${{index + 1}}`,
       panel: panel,
       form: panel.querySelector(".command-form"),
       input: panel.querySelector(".command-input"),
       output: panel.querySelector(".terminal-output"),
-      runButton: panel.querySelector(".run-command"),
-      clearButton: panel.querySelector(".clear-command"),
       running: false
     }}));
     let activeTerminal = terminalStates[0];
@@ -1371,6 +1616,25 @@ def build_index_html(
     const terminalResizeState = {{
       pointerId: null
     }};
+    const commandClientId = loadCommandClientId();
+
+    function loadCommandClientId() {{
+      const storageKey = "uploadServerCommandClientId";
+      const fallbackId = `client-${{Date.now().toString(36)}}-${{Math.random().toString(36).slice(2, 10)}}`;
+
+      try {{
+        const existing = window.localStorage.getItem(storageKey);
+        if (existing) return existing;
+
+        const generated = window.crypto && typeof window.crypto.randomUUID === "function"
+          ? window.crypto.randomUUID()
+          : fallbackId;
+        window.localStorage.setItem(storageKey, generated);
+        return generated;
+      }} catch (error) {{
+        return fallbackId;
+      }}
+    }}
 
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
@@ -1395,8 +1659,8 @@ def build_index_html(
     for (const terminal of terminalStates) {{
       terminal.panel.addEventListener("pointerdown", () => setActiveTerminal(terminal));
       terminal.input.addEventListener("focus", () => setActiveTerminal(terminal));
+      terminal.input.addEventListener("keydown", event => handleCommandInputKeydown(event, terminal));
       terminal.form.addEventListener("submit", event => runCommand(event, terminal));
-      terminal.clearButton.addEventListener("click", () => runClearCommand(terminal));
     }}
 
     for (const button of runPresetButtons) {{
@@ -1644,8 +1908,6 @@ def build_index_html(
 
     function setCommandRunning(terminal, isRunning) {{
       terminal.running = isRunning;
-      terminal.runButton.disabled = isRunning;
-      terminal.clearButton.disabled = isRunning;
 
       const anyRunning = terminalStates.some(state => state.running);
       for (const button of runPresetButtons) {{
@@ -1723,15 +1985,53 @@ def build_index_html(
       await postSettings({{ logging: statLog.dataset.logging !== "true" }});
     }}
 
+    async function handleCommandInputKeydown(event, terminal = activeTerminal) {{
+      if (event.key !== "Tab") return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+      await autocompleteCommandInput(terminal);
+    }}
+
+    async function autocompleteCommandInput(terminal = activeTerminal) {{
+      const input = terminal.input;
+      const cursor = typeof input.selectionStart === "number"
+        ? input.selectionStart
+        : input.value.length;
+
+      try {{
+        const response = await fetch("/complete-command", {{
+          method: "POST",
+          headers: {{
+            "Content-Type": "application/json"
+          }},
+          body: JSON.stringify({{
+            command: input.value,
+            cursor: cursor,
+            terminal_id: terminal.id,
+            client_id: commandClientId
+          }})
+        }});
+        const result = await response.json();
+        if (!response.ok) {{
+          return;
+        }}
+        if (typeof result.command !== "string") {{
+          return;
+        }}
+
+        input.value = result.command;
+        const nextCursor = Number.isInteger(result.cursor) ? result.cursor : input.value.length;
+        input.setSelectionRange(nextCursor, nextCursor);
+      }} catch (error) {{
+        console.warn(error.message);
+      }}
+    }}
+
     async function runCommand(event, terminal = activeTerminal) {{
       event.preventDefault();
       const command = terminal.input.value.trim();
       terminal.input.value = "";
       await executeCommand(command, terminal);
-    }}
-
-    async function runClearCommand(terminal = activeTerminal) {{
-      await executeCommand("clear", terminal);
     }}
 
     async function executeCommand(command, terminal = activeTerminal) {{
@@ -1752,7 +2052,11 @@ def build_index_html(
           headers: {{
             "Content-Type": "application/json"
           }},
-          body: JSON.stringify({{ command: command }})
+          body: JSON.stringify({{
+            command: command,
+            terminal_id: terminal.id,
+            client_id: commandClientId
+          }})
         }});
         const result = await response.json();
 
@@ -1763,7 +2067,6 @@ def build_index_html(
 
         if (result.stdout) appendTerminal(result.stdout, terminal);
         if (result.stderr) appendTerminal(result.stderr, terminal);
-        if (!result.stdout && !result.stderr && result.returncode === 0) appendTerminal("exit 0\\n", terminal);
         if (result.returncode !== 0) appendTerminal(`[exit ${{result.returncode}}]\\n`, terminal);
       }} catch (error) {{
         appendTerminal(`${{error.message}}\\n`, terminal);
@@ -1827,6 +2130,49 @@ class UploadHandler(SimpleHTTPRequestHandler):
     upload_dir: Path
     runtime_settings: RuntimeSettings
     event_logger: EventLogger
+    command_sessions: dict[tuple[str, str], dict[str, object]] = {}
+    command_sessions_lock = threading.Lock()
+    command_session_ttl_seconds = 12 * 60 * 60
+    command_sessions_limit = 128
+
+    def get_command_session(self, payload: dict[str, object]) -> tuple[dict[str, object], str]:
+        client_id = normalize_command_session_id(payload.get("client_id"), self.client_address[0])
+        terminal_id = normalize_command_session_id(payload.get("terminal_id"), "terminal-1")
+        session_key = (client_id, terminal_id)
+        now = time.time()
+
+        with self.command_sessions_lock:
+            stale_before = now - self.command_session_ttl_seconds
+            stale_keys = [
+                key
+                for key, session in self.command_sessions.items()
+                if float(session.get("last_used", 0.0)) < stale_before
+            ]
+            for key in stale_keys:
+                self.command_sessions.pop(key, None)
+
+            session = self.command_sessions.get(session_key)
+            if session is None:
+                session = {
+                    "cwd": str(self.upload_dir.resolve()),
+                    "env": dict(os.environ),
+                    "last_used": now,
+                    "lock": threading.Lock(),
+                    "terminal_id": terminal_id,
+                }
+                self.command_sessions[session_key] = session
+            else:
+                session["last_used"] = now
+
+            if len(self.command_sessions) > self.command_sessions_limit:
+                oldest_key = min(
+                    self.command_sessions,
+                    key=lambda key: float(self.command_sessions[key].get("last_used", now)),
+                )
+                if oldest_key != session_key:
+                    self.command_sessions.pop(oldest_key, None)
+
+            return session, terminal_id
 
     def send_response(self, code: int, message: str | None = None) -> None:
         self.last_response_code = code
@@ -1968,6 +2314,10 @@ class UploadHandler(SimpleHTTPRequestHandler):
             self.run_command()
             return
 
+        if path == "/complete-command":
+            self.complete_command()
+            return
+
         if path == "/settings":
             self.update_settings()
             return
@@ -2004,23 +2354,104 @@ class UploadHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": "Invalid JSON request"}, status=400)
             return
 
-        command = payload.get("command") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            self.send_json({"error": "Invalid JSON request"}, status=400)
+            return
+
+        command = payload.get("command")
         if not isinstance(command, str):
             self.send_json({"error": "Missing command"}, status=400)
             return
 
+        session, terminal_id = self.get_command_session(payload)
+        session_lock = session["lock"]
         try:
-            settings = self.runtime_settings.snapshot()
-            result = run_shell_command(command, self.upload_dir, settings["command_timeout"])
+            with session_lock:
+                settings = self.runtime_settings.snapshot()
+                result = run_shell_command(
+                    command,
+                    self.upload_dir,
+                    settings["command_timeout"],
+                    session_state=session,
+                )
         except ValueError as exc:
             self.send_json({"error": str(exc)}, status=400)
             return
 
         self.send_json(result)
         self.log_event(
-            f"Ran command {command!r} "
+            f"Ran command {command!r} in {terminal_id} "
             f"(exit {result['returncode']}, {result['elapsed']:.3f}s)"
         )
+
+    def complete_command(self) -> None:
+        content_length = self.headers.get("Content-Length")
+        if content_length is None:
+            self.send_json({"error": "Content-Length header is required"}, status=411)
+            return
+
+        try:
+            body_size = int(content_length)
+        except ValueError:
+            self.send_json({"error": "Invalid Content-Length header"}, status=400)
+            return
+
+        if body_size < 0 or body_size > MAX_COMMAND_BODY_SIZE:
+            self.send_json({"error": "Completion request is too large"}, status=413)
+            return
+
+        try:
+            payload = json.loads(self.rfile.read(body_size).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, status=400)
+            return
+
+        if not isinstance(payload, dict):
+            self.send_json({"error": "Invalid JSON request"}, status=400)
+            return
+
+        command = payload.get("command")
+        if not isinstance(command, str):
+            self.send_json({"error": "Missing command"}, status=400)
+            return
+
+        cursor_value = payload.get("cursor")
+        cursor: int | None
+        if cursor_value is None:
+            cursor = None
+        elif isinstance(cursor_value, int):
+            cursor = cursor_value
+        elif isinstance(cursor_value, float) and cursor_value.is_integer():
+            cursor = int(cursor_value)
+        else:
+            self.send_json({"error": "Invalid cursor"}, status=400)
+            return
+
+        session, _terminal_id = self.get_command_session(payload)
+        session_lock = session["lock"]
+        with session_lock:
+            raw_cwd = session.get("cwd")
+            if isinstance(raw_cwd, str) and raw_cwd:
+                candidate_cwd = Path(raw_cwd).expanduser()
+                if not candidate_cwd.is_absolute():
+                    candidate_cwd = self.upload_dir / candidate_cwd
+                try:
+                    resolved_cwd = candidate_cwd.resolve()
+                except OSError:
+                    resolved_cwd = self.upload_dir.resolve()
+            else:
+                resolved_cwd = self.upload_dir.resolve()
+            session_cwd = resolved_cwd if resolved_cwd.is_dir() else self.upload_dir.resolve()
+            raw_env = session.get("env")
+            session_env = (
+                {key: str(value) for key, value in raw_env.items() if isinstance(key, str)}
+                if isinstance(raw_env, dict)
+                else dict(os.environ)
+            )
+            result = complete_command_text(command, cursor, session_cwd, session_env)
+            session["last_used"] = time.time()
+
+        self.send_json(result)
 
     def update_settings(self) -> None:
         content_length = self.headers.get("Content-Length")
@@ -2262,6 +2693,8 @@ def make_handler(
     ConfiguredUploadHandler.upload_dir = upload_dir
     ConfiguredUploadHandler.runtime_settings = runtime_settings
     ConfiguredUploadHandler.event_logger = event_logger
+    ConfiguredUploadHandler.command_sessions = {}
+    ConfiguredUploadHandler.command_sessions_lock = threading.Lock()
     return ConfiguredUploadHandler
 
 

@@ -334,6 +334,143 @@ def test_run_command_endpoint_is_always_available(tmp_path: Path) -> None:
     assert payload["stdout"] == "endpoint"
 
 
+def test_run_command_endpoint_persists_exports_per_terminal(tmp_path: Path) -> None:
+    def run_command(
+        host: str,
+        port: int,
+        command: str,
+        client_id: str,
+        terminal_id: str,
+    ) -> dict:
+        request_body = json.dumps(
+            {
+                "command": command,
+                "client_id": client_id,
+                "terminal_id": terminal_id,
+            }
+        )
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            "/run-command",
+            body=request_body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(request_body)),
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+        return payload
+
+    variable_name = "UPLOAD_SERVER_TEST_SESSION_VAR"
+    variable_value = "session-value-42"
+
+    with running_server(tmp_path) as (host, port):
+        first = run_command(
+            host,
+            port,
+            f"export {variable_name}={variable_value}",
+            client_id="client-a",
+            terminal_id="terminal-1",
+        )
+        second = run_command(
+            host,
+            port,
+            f"echo ${variable_name}",
+            client_id="client-a",
+            terminal_id="terminal-1",
+        )
+        other_terminal = run_command(
+            host,
+            port,
+            f"echo ${variable_name}",
+            client_id="client-a",
+            terminal_id="terminal-2",
+        )
+
+    assert first["returncode"] == 0
+    assert second["returncode"] == 0
+    assert second["stdout"].strip() == variable_value
+    assert other_terminal["stdout"].strip() != variable_value
+
+
+def test_complete_command_endpoint_uses_terminal_session_state(tmp_path: Path) -> None:
+    def request_json(
+        host: str,
+        port: int,
+        path: str,
+        payload: dict,
+    ) -> tuple[int, dict]:
+        request_body = json.dumps(payload)
+        connection = http.client.HTTPConnection(host, port)
+        connection.request(
+            "POST",
+            path,
+            body=request_body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(request_body)),
+            },
+        )
+        response = connection.getresponse()
+        status = response.status
+        data = json.loads(response.read().decode("utf-8"))
+        connection.close()
+        return status, data
+
+    variable_name = "UPLOAD_SERVER_COMPLETION_VAR"
+    variable_value = "abc123"
+
+    with running_server(tmp_path) as (host, port):
+        status, run_payload = request_json(
+            host,
+            port,
+            "/run-command",
+            {
+                "command": f"export {variable_name}={variable_value}",
+                "client_id": "client-b",
+                "terminal_id": "terminal-1",
+            },
+        )
+        assert status == 200
+        assert run_payload["returncode"] == 0
+
+        status, complete_payload = request_json(
+            host,
+            port,
+            "/complete-command",
+            {
+                "command": "echo $UPLOAD_SERVER_COMPLETI",
+                "cursor": len("echo $UPLOAD_SERVER_COMPLETI"),
+                "client_id": "client-b",
+                "terminal_id": "terminal-1",
+            },
+        )
+        assert status == 200
+        assert complete_payload["command"].startswith("echo $UPLOAD_SERVER_COMPLETION_VAR")
+        assert complete_payload["match_count"] >= 1
+
+        status, other_terminal_payload = request_json(
+            host,
+            port,
+            "/complete-command",
+            {
+                "command": "echo $UPLOAD_SERVER_COMPLETI",
+                "cursor": len("echo $UPLOAD_SERVER_COMPLETI"),
+                "client_id": "client-b",
+                "terminal_id": "terminal-2",
+            },
+        )
+        assert status == 200
+        assert (
+            other_terminal_payload["command"] == "echo $UPLOAD_SERVER_COMPLETI"
+            or "$UPLOAD_SERVER_COMPLETION_VAR" not in other_terminal_payload["command"]
+        )
+
+
 def test_activity_log_file_records_server_actions(tmp_path: Path) -> None:
     def request(
         host: str,
@@ -683,6 +820,12 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert '<span class="folder-name">docs</span>' in page
     assert '<a class="file-name" href="/docs/note.txt">note.txt</a>' in page
     assert '<a class="file-name" href="/root.txt">root.txt</a>' in page
+    assert (
+        '<a class="button secondary small icon-button" href="/root.txt" download '
+        'aria-label="Download root.txt" title="Download root.txt"><span aria-hidden="true">&#x2913;</span></a>'
+        in page
+    )
+    assert 'href="/root.txt" download>Download</a>' not in page
     assert '<header class="top">' not in page
     assert '<h1>File Share</h1>' not in page
     assert f'<div class="muted">{tmp_path}</div>' not in page
@@ -696,49 +839,67 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "grid-template-columns: minmax(0, 1fr);" in page
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in page
     assert "height: 420px;" in page
-    assert "grid-template-rows: auto minmax(0, 1fr) auto;" in page
+    assert "grid-template-rows: minmax(0, 1fr) auto;" in page
     assert 'class="panel command-presets"' in page
     assert 'class="upload-feedback"' in page
     assert "Drop files here" not in page
     assert "drop-zone" not in page
     assert ".upload.dragover" not in page
     assert "examples-panel" not in page
-    assert 'class="files-layout"' in page
-    assert "grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);" in page
-    assert 'class="panel file-control-panel"' in page
+    assert 'class="panel files-panel"' in page
+    assert 'class="files-toolbar"' in page
+    assert 'class="file-left-controls"' in page
+    assert 'class="file-right-controls"' in page
     assert 'class="file-list-panel"' in page
-    assert ".file-actions {" in page
+    assert ".files-toolbar {" in page
     assert "display: grid;" in page
     assert "grid-template-columns: minmax(280px, var(--terminal-left-width)) 16px minmax(280px, 1fr);" in page
     assert ".terminal-splitter {" in page
     assert ".terminal-grid.resizing," in page
-    assert ".file-actions .button {" in page
+    assert ".file-right-controls .button {" in page
     assert "min-width: 0;" in page
-    assert "width: 100%;" in page
-    assert 'class="file-title"' in page
-    assert ".file-title .icon-button {" in page
+    assert "justify-content: flex-end;" in page
     assert "margin-left: auto;" in page
+    assert ">Files</h2>" not in page
+    assert ">Explorer</h2>" in page
+    assert 'class="files-heading"' in page
+    assert ".file-right-controls .icon-button {" not in page
     assert '<span class="pill">2 files</span>' not in page
     assert '<span class="pill">8 B</span>' not in page
-    assert page.index('id="refresh-files"') < page.index('id="choose-files"')
+    assert page.index('id="choose-files"') < page.index('id="refresh-files"')
     assert 'class="stats"' not in page
     assert 'id="stat-upload-limit"' not in page
     assert 'id="stat-command-timeout"' not in page
     assert 'id="stat-auto-stop"' not in page
     assert 'id="file-picker"' in page
     assert 'id="choose-files"' in page
+    assert 'aria-label="Choose Files"' in page
+    assert 'title="Choose Files"' in page
+    assert "&#x1F4C1;" in page
+    assert ">Choose Files</button>" not in page
     assert 'id="download-selected"' in page
+    assert 'aria-label="Download Selected"' in page
+    assert 'title="Download Selected"' in page
+    assert "&#x2913;" in page
+    assert ">Download Selected</button>" not in page
     assert 'id="delete-selected"' in page
+    assert 'aria-label="Delete Selected"' in page
+    assert 'title="Delete Selected"' in page
+    assert "&#x1F5D1;" in page
+    assert ">Delete Selected</button>" not in page
     assert 'id="refresh-files"' in page
     assert 'class="button secondary small icon-button"' in page
     assert 'aria-label="Refresh"' in page
     assert 'title="Refresh"' in page
     assert "&#x21bb;" in page
     assert ">Refresh</button>" not in page
-    assert page.index('id="download-selected"') < page.index('id="choose-files"')
-    assert page.index('id="choose-files"') < page.index('href="/download.zip"')
+    assert ">Download ZIP</a>" not in page
+    assert 'href="/download.zip"><span aria-hidden="true">&#x2913;</span>&nbsp;ZIP</a>' in page
+    assert page.index('id="download-selected"') < page.index('href="/download.zip"')
     assert page.index('href="/download.zip"') < page.index('id="delete-selected"')
-    assert page.index('class="panel file-control-panel"') < page.index('id="choose-files"')
+    assert page.index('id="delete-selected"') < page.index('id="choose-files"')
+    assert page.index('id="choose-files"') < page.index('id="refresh-files"')
+    assert page.index('class="file-right-controls"') < page.index('id="choose-files"')
     assert page.index('href="/download.zip"') < page.index('class="file-list-panel"')
     assert page.index('class="file-list-panel"') < page.index('<details class="folder">')
     assert 'id="command-list-selected"' in page
@@ -790,7 +951,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "border-color: var(--accent-strong);" in page
     assert "color: var(--accent-strong);" in page
     assert 'id="stat-overwrite"' in page
-    assert page.index('class="file-title"') < page.index('id="stat-overwrite"')
+    assert page.index('class="file-left-controls"') < page.index('id="stat-overwrite"')
     assert 'data-enabled="false"' in page
     assert ">Rename</button>" in page
     assert 'id="stat-hidden"' in page
@@ -809,33 +970,33 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'role="separator"' in page
     assert 'aria-orientation="vertical"' in page
     assert 'aria-label="Resize terminal panels"' in page
-    assert 'class="terminal-title"' in page
+    assert 'class="terminal-head"' not in page
+    assert 'class="terminal-title"' not in page
     assert page.count('class="panel terminal"') == 2
     assert 'id="command-form"' in page
     assert 'id="command-form-2"' in page
-    assert 'class="command-actions"' in page
-    assert 'id="run-command"' in page
-    assert 'id="run-command-2"' in page
-    assert 'id="clear-command"' in page
-    assert 'id="clear-command-2"' in page
-    assert 'form="command-form"' in page
-    assert 'form="command-form-2"' in page
-    assert page.index('id="run-command"') < page.index('id="command-form"')
-    assert page.index('id="run-command-2"') < page.index('id="command-form-2"')
+    assert 'class="command-actions"' not in page
+    assert 'id="run-command"' not in page
+    assert 'id="run-command-2"' not in page
+    assert 'id="clear-command"' not in page
+    assert 'id="clear-command-2"' not in page
+    assert 'form="command-form"' not in page
+    assert 'form="command-form-2"' not in page
     assert 'id="terminal-output"' in page
     assert 'id="terminal-output-2"' in page
-    assert ">CLI 1</h2>" in page
-    assert ">CLI 2</h2>" in page
+    assert ">CLI 1</h2>" not in page
+    assert ">CLI 2</h2>" not in page
     assert "CLI enabled" not in page
-    assert "<span class=\"muted\">shell</span>" in page
+    assert "<span class=\"muted\">shell</span>" not in page
     assert "$ pwd" in page
     assert "data-cli-enabled" not in page
     assert 'onsubmit="return false"' in page
     assert 'appendTerminal(`\\n$ ${command}\\n`, terminal);' in page
-    assert 'appendTerminal("exit 0\\n", terminal);' in page
+    assert 'appendTerminal("exit 0\\n", terminal);' not in page
     assert 'statOverwrite.addEventListener("click", toggleOverwriteMode);' in page
     assert 'statHidden.addEventListener("click", toggleHiddenVisibility);' in page
     assert 'statLog.addEventListener("click", toggleLogging);' in page
+    assert 'terminal.input.addEventListener("keydown", event => handleCommandInputKeydown(event, terminal));' in page
     assert 'const terminalResizeMedia = window.matchMedia("(max-width: 720px)");' in page
     assert 'terminalSplitter.addEventListener("pointerdown", beginTerminalResize);' in page
     assert 'terminalSplitter.addEventListener("keydown", resizeTerminalWithKeyboard);' in page
@@ -853,11 +1014,23 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'commandListSelected.textContent' not in page
     assert 'commandSizeSelected.textContent' not in page
     assert 'commandStatSelected.textContent' not in page
+    assert 'id: `terminal-${index + 1}`' in page
+    assert "const commandClientId = loadCommandClientId();" in page
+    assert "function loadCommandClientId()" in page
+    assert "async function handleCommandInputKeydown(event, terminal = activeTerminal)" in page
+    assert "if (event.key !== \"Tab\") return;" in page
+    assert "event.preventDefault();" in page
+    assert "await autocompleteCommandInput(terminal);" in page
+    assert 'async function autocompleteCommandInput(terminal = activeTerminal)' in page
+    assert 'fetch("/complete-command"' in page
+    assert "cursor: cursor" in page
     assert 'const command = target && "value" in target ? target.value.trim() : "";' in page
     assert 'async function executeCommand(command, terminal = activeTerminal)' in page
-    assert 'terminal.clearButton.addEventListener("click", () => runClearCommand(terminal));' in page
-    assert 'async function runClearCommand(terminal = activeTerminal)' in page
-    assert 'await executeCommand("clear", terminal);' in page
+    assert "terminal_id: terminal.id" in page
+    assert "client_id: commandClientId" in page
+    assert 'terminal.clearButton.addEventListener("click", () => runClearCommand(terminal));' not in page
+    assert 'async function runClearCommand(terminal = activeTerminal)' not in page
+    assert 'await executeCommand("clear", terminal);' not in page
     assert 'appendTerminal("\nCLI is disabled' not in page
     assert 'String.raw`Invoke-WebRequest' not in page
     assert 'command === "clear"' in page
