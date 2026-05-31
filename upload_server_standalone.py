@@ -864,7 +864,7 @@ def build_index_html(
       font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }}
     main {{
-      width: min(1280px, calc(100% - 32px));
+      width: min(1440px, calc(100% - 32px));
       margin: 32px auto;
     }}
     h2 {{
@@ -1228,7 +1228,7 @@ def build_index_html(
       border-radius: 8px;
     }}
     @media (max-width: 720px) {{
-      main {{ width: min(100% - 20px, 1280px); margin-top: 18px; }}
+      main {{ width: min(100% - 20px, 1440px); margin-top: 18px; }}
       .workbench {{ grid-template-columns: minmax(0, 1fr); }}
       .terminal-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}

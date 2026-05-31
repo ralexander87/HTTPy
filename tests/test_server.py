@@ -689,7 +689,7 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert "Security is minimal" in page
     assert "upload, download, delete" in page
     assert "Use only on trusted networks" in page
-    assert "width: min(1280px, calc(100% - 32px));" in page
+    assert "width: min(1440px, calc(100% - 32px));" in page
     assert ".workbench {" in page
     assert "grid-template-columns: minmax(0, 1fr);" in page
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in page
