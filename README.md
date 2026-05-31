@@ -3,6 +3,17 @@
 A small local file sharing server with browser uploads, command-line uploads, downloads,
 and a portable single-file version.
 
+## Security Warning
+
+This tool is intentionally lightweight and does not include authentication.
+Anyone who can reach the server can upload, download, delete, change settings,
+and run CLI commands.
+
+Use only on trusted networks, do not expose it directly to the public internet,
+and stop the server when you are done.
+
+See [SECURITY.md](SECURITY.md) for usage expectations and reporting details.
+
 ## Setup
 
 ```bash
@@ -115,3 +126,7 @@ or Log/No Log while the server is running.
 The server creates `.upload_server.log` in the directory where it starts. It is
 hidden from the normal browser file list, but keeps useful local activity
 history for short sharing sessions.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
