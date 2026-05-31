@@ -38,22 +38,18 @@ You can also run the standalone file without installing the package:
 python upload_server_standalone.py
 ```
 
-  <div align="center">
+<div align="center">
   <table border="0" cellspacing="0" cellpadding="5">
     <tr>
       <td align="center">
-        <a href="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260530_205258.jpg"><img src="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260530_205258.jpg" width="250" height="150" alt="Image 1" style="object-fit: cover;"></a>
+        <a href="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260531_184415.jpg"><img src="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260531_184415.jpg" width="250" height="150" alt="Image 1" style="object-fit: cover;"></a>
       </td>
       <td align="center">
-        <a href="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260530_205341.jpg"><img src="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260530_205341.jpg" width="250" height="150" alt="Image 2" style="object-fit: cover;"></a>
-      </td>
-      <td align="center">
-        <a href="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260530_205429.jpg"><img src="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260530_205429.jpg" width="250" height="150" alt="Image 3" style="object-fit: cover;"></a>
+        <a href="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260531_184330.jpg"><img src="https://raw.githubusercontent.com/ralexander87/HTTPy/main/screenshot/screenshot_20260531_184330.jpg" width="250" height="150" alt="Image 2" style="object-fit: cover;"></a>
       </td>
     </tr>
   </table>
 </div>
-
 ## Browser Uploads
 
 Open the printed URL in a browser. The page includes:
