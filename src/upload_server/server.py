@@ -1026,9 +1026,39 @@ def build_index_html(
       line-height: 1;
     }}
     .terminal-grid {{
+      --terminal-left-width: 1fr;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
+      grid-template-columns: minmax(280px, var(--terminal-left-width)) 16px minmax(280px, 1fr);
+      gap: 0;
+      align-items: stretch;
+    }}
+    .terminal-splitter {{
+      width: 16px;
+      cursor: col-resize;
+      touch-action: none;
+      user-select: none;
+      display: grid;
+      place-items: center;
+    }}
+    .terminal-splitter::before {{
+      content: "";
+      width: 2px;
+      height: calc(100% - 16px);
+      border-radius: 999px;
+      background: var(--line);
+    }}
+    .terminal-splitter:hover::before,
+    .terminal-grid.resizing .terminal-splitter::before {{
+      background: color-mix(in srgb, var(--accent) 72%, var(--line));
+    }}
+    .terminal-splitter:focus-visible {{
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+      border-radius: 6px;
+    }}
+    .terminal-grid.resizing,
+    .terminal-grid.resizing * {{
+      cursor: col-resize;
     }}
     .terminal {{
       height: 420px;
@@ -1230,7 +1260,8 @@ def build_index_html(
     @media (max-width: 720px) {{
       main {{ width: min(100% - 20px, 1440px); margin-top: 18px; }}
       .workbench {{ grid-template-columns: minmax(0, 1fr); }}
-      .terminal-grid {{ grid-template-columns: minmax(0, 1fr); }}
+      .terminal-grid {{ grid-template-columns: minmax(0, 1fr); gap: 16px; }}
+      .terminal-splitter {{ display: none; }}
       .command-presets .examples-grid {{ grid-template-columns: minmax(0, 1fr); }}
       .command-example {{ grid-template-columns: minmax(0, 1fr); }}
       .settings-form {{ grid-template-columns: minmax(0, 1fr); }}
@@ -1291,7 +1322,7 @@ def build_index_html(
         </div>
       </section>
 
-      <div class="terminal-grid">
+      <div class="terminal-grid" id="terminal-grid">
         <section class="panel terminal">
           <header class="terminal-head">
             <div class="terminal-title">
@@ -1309,6 +1340,8 @@ def build_index_html(
             <input id="command-input" class="command-input" type="text" autocomplete="off" spellcheck="false" aria-label="Command">
           </form>
         </section>
+
+        <div id="terminal-splitter" class="terminal-splitter" role="separator" aria-label="Resize terminal panels" aria-orientation="vertical" tabindex="0"></div>
 
         <section class="panel terminal">
           <header class="terminal-head">
@@ -1368,6 +1401,8 @@ def build_index_html(
     const selectedDownload = document.getElementById("download-selected");
     const deleteSelected = document.getElementById("delete-selected");
     const refreshFiles = document.getElementById("refresh-files");
+    const terminalGrid = document.getElementById("terminal-grid");
+    const terminalSplitter = document.getElementById("terminal-splitter");
     const commandPresetInputs = Array.from(document.querySelectorAll(".command-preset-input"));
     const runPresetButtons = Array.from(document.querySelectorAll(".run-command-preset"));
     const treeChecks = Array.from(document.querySelectorAll(".tree-check"));
@@ -1390,6 +1425,10 @@ def build_index_html(
     }}));
     let activeTerminal = terminalStates[0];
     let commandPresetSaveTimer = null;
+    const terminalResizeMedia = window.matchMedia("(max-width: 720px)");
+    const terminalResizeState = {{
+      pointerId: null
+    }};
 
     choose.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadFiles(picker.files));
@@ -1400,6 +1439,17 @@ def build_index_html(
     statOverwrite.addEventListener("click", toggleOverwriteMode);
     statHidden.addEventListener("click", toggleHiddenVisibility);
     statLog.addEventListener("click", toggleLogging);
+    terminalSplitter.addEventListener("pointerdown", beginTerminalResize);
+    terminalSplitter.addEventListener("pointermove", continueTerminalResize);
+    terminalSplitter.addEventListener("pointerup", endTerminalResize);
+    terminalSplitter.addEventListener("pointercancel", endTerminalResize);
+    terminalSplitter.addEventListener("keydown", resizeTerminalWithKeyboard);
+    if (terminalResizeMedia.addEventListener) {{
+      terminalResizeMedia.addEventListener("change", syncTerminalResizeMode);
+    }} else {{
+      terminalResizeMedia.addListener(syncTerminalResizeMode);
+    }}
+    syncTerminalResizeMode();
 
     for (const terminal of terminalStates) {{
       terminal.panel.addEventListener("pointerdown", () => setActiveTerminal(terminal));
@@ -1575,6 +1625,80 @@ def build_index_html(
 
     function setActiveTerminal(terminal) {{
       activeTerminal = terminal;
+    }}
+
+    function terminalResizeBounds() {{
+      const gridWidth = terminalGrid.getBoundingClientRect().width;
+      const splitterWidth = terminalSplitter.getBoundingClientRect().width || 16;
+      const minPanelWidth = 280;
+      const maxLeftWidth = Math.max(minPanelWidth, gridWidth - minPanelWidth - splitterWidth);
+      return {{
+        minLeftWidth: minPanelWidth,
+        maxLeftWidth: maxLeftWidth,
+        splitterWidth: splitterWidth
+      }};
+    }}
+
+    function applyTerminalResize(clientX) {{
+      if (terminalResizeMedia.matches) return;
+
+      const gridRect = terminalGrid.getBoundingClientRect();
+      const bounds = terminalResizeBounds();
+      const rawLeftWidth = clientX - gridRect.left - bounds.splitterWidth / 2;
+      const clampedLeftWidth = Math.min(
+        bounds.maxLeftWidth,
+        Math.max(bounds.minLeftWidth, rawLeftWidth)
+      );
+      terminalGrid.style.setProperty("--terminal-left-width", `${{Math.round(clampedLeftWidth)}}px`);
+    }}
+
+    function beginTerminalResize(event) {{
+      if (terminalResizeMedia.matches) return;
+
+      event.preventDefault();
+      terminalResizeState.pointerId = event.pointerId;
+      terminalGrid.classList.add("resizing");
+      terminalSplitter.setPointerCapture(event.pointerId);
+      applyTerminalResize(event.clientX);
+    }}
+
+    function continueTerminalResize(event) {{
+      if (terminalResizeState.pointerId !== event.pointerId) return;
+      applyTerminalResize(event.clientX);
+    }}
+
+    function endTerminalResize(event) {{
+      if (terminalResizeState.pointerId !== event.pointerId) return;
+
+      terminalResizeState.pointerId = null;
+      terminalGrid.classList.remove("resizing");
+      if (terminalSplitter.hasPointerCapture(event.pointerId)) {{
+        terminalSplitter.releasePointerCapture(event.pointerId);
+      }}
+    }}
+
+    function resizeTerminalWithKeyboard(event) {{
+      if (terminalResizeMedia.matches) return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+
+      event.preventDefault();
+      const leftWidth = terminalStates[0].panel.getBoundingClientRect().width;
+      const step = event.shiftKey ? 48 : 24;
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      const bounds = terminalResizeBounds();
+      const nextWidth = Math.min(
+        bounds.maxLeftWidth,
+        Math.max(bounds.minLeftWidth, leftWidth + step * direction)
+      );
+      terminalGrid.style.setProperty("--terminal-left-width", `${{Math.round(nextWidth)}}px`);
+    }}
+
+    function syncTerminalResizeMode() {{
+      if (terminalResizeMedia.matches) {{
+        terminalResizeState.pointerId = null;
+        terminalGrid.classList.remove("resizing");
+        terminalGrid.style.setProperty("--terminal-left-width", "1fr");
+      }}
     }}
 
     function setCommandRunning(terminal, isRunning) {{

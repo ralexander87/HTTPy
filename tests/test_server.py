@@ -707,7 +707,9 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'class="file-list-panel"' in page
     assert ".file-actions {" in page
     assert "display: grid;" in page
-    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in page
+    assert "grid-template-columns: minmax(280px, var(--terminal-left-width)) 16px minmax(280px, 1fr);" in page
+    assert ".terminal-splitter {" in page
+    assert ".terminal-grid.resizing," in page
     assert ".file-actions .button {" in page
     assert "min-width: 0;" in page
     assert "width: 100%;" in page
@@ -799,6 +801,11 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'title="Log enabled"' in page
     assert ">Log</button>" in page
     assert 'class="terminal-grid"' in page
+    assert 'id="terminal-grid"' in page
+    assert 'id="terminal-splitter"' in page
+    assert 'role="separator"' in page
+    assert 'aria-orientation="vertical"' in page
+    assert 'aria-label="Resize terminal panels"' in page
     assert 'class="terminal-title"' in page
     assert page.count('class="panel terminal"') == 2
     assert 'id="command-form"' in page
@@ -826,6 +833,12 @@ def test_index_groups_nested_files_in_collapsible_folders(tmp_path: Path) -> Non
     assert 'statOverwrite.addEventListener("click", toggleOverwriteMode);' in page
     assert 'statHidden.addEventListener("click", toggleHiddenVisibility);' in page
     assert 'statLog.addEventListener("click", toggleLogging);' in page
+    assert 'const terminalResizeMedia = window.matchMedia("(max-width: 720px)");' in page
+    assert 'terminalSplitter.addEventListener("pointerdown", beginTerminalResize);' in page
+    assert 'terminalSplitter.addEventListener("keydown", resizeTerminalWithKeyboard);' in page
+    assert "function beginTerminalResize(event)" in page
+    assert "function resizeTerminalWithKeyboard(event)" in page
+    assert ".terminal-splitter { display: none; }" in page
     assert 'async function postSettings(updates)' in page
     assert 'async function toggleOverwriteMode()' in page
     assert 'async function toggleHiddenVisibility()' in page
